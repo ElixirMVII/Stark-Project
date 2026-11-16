@@ -27,6 +27,7 @@ drag_hold_ms = 250
 [scroll]
 speed = 1.0
 deadzone = 0.01
+invert = false              # true = กลับทิศการสกรอล
 
 [gestures]
 swipe_dist_x = 0.25

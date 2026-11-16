@@ -1,4 +1,4 @@
-"""หน้าต่าง debug: ภาพกล้อง + landmark + ชื่อท่า + FPS / เวลาประมวลผล
+"""หน้าต่าง debug: ภาพกล้อง + landmark + ชื่อท่า + สถานะ engine + FPS / latency
 
 วาดด้วย ``QPainter`` ทั้งหมด (ไม่ใช้หน้าต่างของ OpenCV) ภาพอยู่ในหน่วยความจำเท่านั้น
 ไม่มีการบันทึกลงดิสก์
@@ -21,6 +21,8 @@ from PySide6.QtWidgets import QWidget
 
 from .camera import FramePacket
 from .config import Config
+from .geometry import pointer_anchor
+from .gestures import EngineSnapshot, State
 from .tracker import GESTURE_NONE, LM, Hand, hand_connections
 
 __all__ = ["DebugView"]
@@ -30,7 +32,9 @@ _TEXT = QColor("#E6F1F5")
 _DIM = QColor("#7A8B99")
 _PANEL = QColor(0, 0, 0, 170)
 _WARN = QColor("#FFB300")
+_DISARMED = QColor("#7A8B99")
 _FINGERTIPS = (LM.THUMB_TIP, LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP)
+_MARGIN = 8
 
 
 class DebugView(QWidget):
@@ -38,11 +42,20 @@ class DebugView(QWidget):
 
     closed = Signal()
 
-    def __init__(self, config: Config, *, dry_run: bool = False, parent=None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        *,
+        dry_run: bool = False,
+        arm_hotkey: str = "",
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._config = config
         self._dry_run = dry_run
+        self._arm_hotkey = arm_hotkey
         self._packet: FramePacket | None = None
+        self._armed = False
         self._camera_info = ""
         self._message: str | None = "กำลังเปิดกล้อง…"
         self._connections = hand_connections()
@@ -63,7 +76,13 @@ class DebugView(QWidget):
 
     def show_packet(self, packet: FramePacket) -> None:
         self._packet = packet
+        self._armed = packet.result.snapshot.armed
         self._message = None
+        self.update()
+
+    def set_armed(self, armed: bool) -> None:
+        """อัปเดตป้าย ARM ทันที (ไม่ต้องรอเฟรมถัดไป เผื่อกล้องค้างอยู่)"""
+        self._armed = armed
         self.update()
 
     def set_camera_info(self, description: str) -> None:
@@ -90,12 +109,16 @@ class DebugView(QWidget):
 
         packet = self._packet
         if packet is not None:
-            target = self._image_rect(packet.hands.width, packet.hands.height)
+            hands = packet.result.hands
+            snapshot = packet.result.snapshot
+            target = self._image_rect(hands.width, hands.height)
             self._draw_image(painter, target, packet.image)
             self._draw_active_region(painter, target)
-            for hand in packet.hands.hands:
+            for hand in hands.hands:
                 self._draw_hand(painter, target, hand)
             self._draw_stats(painter, packet)
+            self._draw_pinch_meter(painter, snapshot)
+        self._draw_arm_badge(painter, packet.result.snapshot if packet else None)
         if self._message:
             self._draw_message(painter, self._message)
         painter.end()
@@ -147,6 +170,17 @@ class DebugView(QWidget):
         for tip in _FINGERTIPS:
             painter.drawEllipse(points[tip], 3.5, 3.5)
 
+        if dominant:  # จุดที่ใช้คุมเคอร์เซอร์ (กึ่งกลางโคนนิ้วชี้กับนิ้วกลาง)
+            ax, ay = pointer_anchor(hand)
+            anchor = QPointF(
+                target.left() + ax * target.width(), target.top() + ay * target.height()
+            )
+            painter.setPen(QPen(_TEXT, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(anchor, 7, 7)
+            painter.drawLine(anchor + QPointF(-11, 0), anchor + QPointF(11, 0))
+            painter.drawLine(anchor + QPointF(0, -11), anchor + QPointF(0, 11))
+
         if hand.gesture == GESTURE_NONE:
             gesture = "—"
         else:
@@ -161,39 +195,111 @@ class DebugView(QWidget):
         box.moveLeft(center_x - box.width() / 2)
         box.moveLeft(max(target.left(), min(box.left(), target.right() - box.width())))
         box.moveTop(max(target.top(), box.top()))
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(_PANEL))
         painter.drawRoundedRect(box, 4, 4)
         painter.setPen(color)
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
 
     def _draw_stats(self, painter: QPainter, packet: FramePacket) -> None:
+        """แถบมุมซ้ายล่าง (มืออยู่ครึ่งบนของเฟรมเป็นส่วนใหญ่ จะได้ไม่บังป้ายชื่อท่า)"""
         cfg = self._config
+        hands = packet.result.hands
+        snapshot = packet.result.snapshot
         fps_ok = packet.fps >= 25.0
         line1 = (
-            f"FPS {packet.fps:5.1f}   process {packet.process_ms:5.1f} ms   "
-            f"hands {len(packet.hands.hands)}"
+            f"FPS {packet.fps:5.1f}   latency {packet.process_ms:5.1f} ms   "
+            f"hands {len(hands.hands)}"
         )
-        details = [self._camera_info or f"{packet.hands.width}x{packet.hands.height}"]
+        details = [self._camera_info or f"{hands.width}x{hands.height}"]
         details.append("mirror on" if cfg.camera.mirror else "mirror off")
         details.append(f"dominant {cfg.tracking.dominant_hand}")
         if self._dry_run:
             details.append("DRY-RUN")
         line2 = " · ".join(details)
 
+        state = [snapshot.state.value]
+        if snapshot.gesture != GESTURE_NONE:
+            state.append(snapshot.gesture)
+        if snapshot.pinch_ratio is not None:
+            state.append(f"pinch {snapshot.pinch_ratio:4.2f}")
+        if snapshot.cursor is not None:
+            state.append(f"cursor ({snapshot.cursor[0]}, {snapshot.cursor[1]})")
+        line3 = " · ".join(state)
+
         painter.setFont(self._mono)
         metrics = painter.fontMetrics()
-        width = max(metrics.horizontalAdvance(line1), metrics.horizontalAdvance(line2)) + 16
+        lines = (line1, line2, line3)
+        width = max(metrics.horizontalAdvance(line) for line in lines) + 16
         line_h = metrics.height()
-        # มุมซ้ายล่าง: มืออยู่ครึ่งบนของเฟรมเป็นส่วนใหญ่ จะได้ไม่บังป้ายชื่อท่า
-        box = QRectF(8, self.height() - 8 - (line_h * 2 + 12), width, line_h * 2 + 12)
+        height = line_h * len(lines) + 12
+        box = QRectF(_MARGIN, self.height() - _MARGIN - height, width, height)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(_PANEL))
         painter.drawRoundedRect(box, 4, 4)
         baseline = box.top() + 6 + metrics.ascent()
-        painter.setPen(_TEXT if fps_ok else _WARN)  # FPS ต่ำกว่าเกณฑ์ 25 → สีเตือน
-        painter.drawText(QPointF(box.left() + 8, baseline), line1)
+        colors = (_TEXT if fps_ok else _WARN, _DIM, _TEXT)  # FPS ต่ำกว่าเกณฑ์ 25 → สีเตือน
+        for i, (line, color) in enumerate(zip(lines, colors)):
+            painter.setPen(color)
+            painter.drawText(QPointF(box.left() + 8, baseline + i * line_h), line)
+
+    def _draw_pinch_meter(self, painter: QPainter, snapshot: EngineSnapshot) -> None:
+        """แถบมุมขวาล่าง: ใกล้จีบแค่ไหน (เต็ม = ถึง pinch.on) และ % ของการค้างเพื่อเริ่มลาก"""
+        if not snapshot.hand_present:
+            return
+        width, height = 120.0, 10.0
+        box = QRectF(
+            self.width() - _MARGIN - width - 12,
+            self.height() - _MARGIN - height - 28,
+            width + 12,
+            height + 28,
+        )
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(_PANEL))
+        painter.drawRoundedRect(box, 4, 4)
+
+        painter.setFont(self._mono)
         painter.setPen(_DIM)
-        painter.drawText(QPointF(box.left() + 8, baseline + line_h), line2)
+        label = "PINCH"
+        if snapshot.pinch_button:
+            label += f" {snapshot.pinch_button.upper()}"
+        if snapshot.state is State.PINCH_PENDING and snapshot.pinch_button == "left":
+            label += f" {snapshot.hold_progress * 100:3.0f}%"
+        painter.drawText(
+            QPointF(box.left() + 6, box.top() + 6 + painter.fontMetrics().ascent()), label
+        )
+
+        bar = QRectF(box.left() + 6, box.bottom() - height - 6, width, height)
+        painter.setPen(QPen(_DIM, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(bar)
+        pinched = snapshot.pinch_level >= 1.0
+        fill = QRectF(bar.left(), bar.top(), bar.width() * snapshot.pinch_level, bar.height())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self._accent if pinched else self._primary))
+        painter.drawRect(fill)
+
+    def _draw_arm_badge(self, painter: QPainter, snapshot: EngineSnapshot | None) -> None:
+        """ป้ายมุมขวาบน: ARMED / DISARMED"""
+        if self._armed:
+            text = "ARMED"
+            if snapshot is not None and snapshot.armed:
+                text += f" · {snapshot.state.value}"
+            color = self._primary
+        else:
+            text = "DISARMED"
+            if self._arm_hotkey:
+                text += f" · {self._arm_hotkey}"
+            color = _DISARMED
+        painter.setFont(self._label_font)
+        metrics = painter.fontMetrics()
+        width = metrics.horizontalAdvance(text) + 16
+        box = QRectF(self.width() - _MARGIN - width, _MARGIN, width, metrics.height() + 8)
+        painter.setPen(QPen(color, 1.5))
+        painter.setBrush(QBrush(_PANEL))
+        painter.drawRoundedRect(box, 4, 4)
+        painter.setPen(color)
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def _draw_message(self, painter: QPainter, message: str) -> None:
         painter.setFont(self._label_font)

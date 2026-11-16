@@ -1,0 +1,157 @@
+"""พิกัดกล้อง (normalized) → พิกัดจอ (physical px) และการแปลง DPI
+
+ฝั่ง input ใช้ **physical px** เป็นหลักเสมอ (ตรงกับที่ Windows ใช้ตอนย้ายเคอร์เซอร์เมื่อ process
+เป็น DPI-aware ซึ่ง Qt 6 ตั้งให้อัตโนมัติ) ส่วนการวาดของ Qt ใช้ logical px จึงต้องแปลงด้วย
+``devicePixelRatio``
+
+v1 รองรับจอหลักจอเดียว แต่ :class:`ScreenGeometry` เก็บ ``left``/``top`` ไว้ให้รองรับหลายจอได้ภายหลัง
+"""
+
+from __future__ import annotations
+
+import math
+import sys
+from dataclasses import dataclass
+
+__all__ = [
+    "PointerTracker",
+    "Region",
+    "ScreenGeometry",
+    "logical_to_physical",
+    "map_to_screen",
+    "normalize_in_region",
+    "physical_to_logical",
+    "primary_screen_geometry",
+]
+
+Region = tuple[float, float, float, float]  # x0, y0, x1, y1 (normalized ในเฟรมกล้อง)
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenGeometry:
+    """พื้นที่จอเป็น physical px"""
+
+    left: int
+    top: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("ขนาดจอต้อง > 0")
+
+    @property
+    def right(self) -> int:
+        """พิกัด x ของ pixel ขวาสุด (นับรวม)"""
+        return self.left + self.width - 1
+
+    @property
+    def bottom(self) -> int:
+        return self.top + self.height - 1
+
+    def clamp(self, x: float, y: float) -> tuple[float, float]:
+        return (
+            min(max(x, float(self.left)), float(self.right)),
+            min(max(y, float(self.top)), float(self.bottom)),
+        )
+
+
+def normalize_in_region(nx: float, ny: float, region: Region) -> tuple[float, float]:
+    """ตำแหน่งใน active region เป็น 0–1 (นอก region ถูกตรึงที่ขอบ)"""
+    x0, y0, x1, y1 = region
+    u = (nx - x0) / (x1 - x0)
+    v = (ny - y0) / (y1 - y0)
+    return (min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0))
+
+
+def map_to_screen(
+    nx: float, ny: float, region: Region, screen: ScreenGeometry
+) -> tuple[float, float]:
+    """จุดในเฟรมกล้อง (normalized) → physical px บนจอ โดย active region ถูกยืดเต็มจอ"""
+    u, v = normalize_in_region(nx, ny, region)
+    return (screen.left + u * (screen.width - 1), screen.top + v * (screen.height - 1))
+
+
+def physical_to_logical(x: float, y: float, dpr: float) -> tuple[float, float]:
+    """physical px → logical px ของ Qt (สำหรับวาด HUD) — ``dpr`` คือ ``devicePixelRatio`` ของจอ"""
+    return (x / dpr, y / dpr)
+
+
+def logical_to_physical(x: float, y: float, dpr: float) -> tuple[float, float]:
+    return (x * dpr, y * dpr)
+
+
+def primary_screen_geometry() -> ScreenGeometry:
+    """ขนาดจอหลักเป็น physical px (ต้องเรียกหลังสร้าง QApplication เพื่อให้ process เป็น DPI-aware แล้ว)"""
+    if sys.platform == "win32":
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)  # SM_CXSCREEN/CY
+        if width > 0 and height > 0:
+            return ScreenGeometry(0, 0, width, height)
+
+    from PySide6.QtGui import QGuiApplication
+
+    screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        raise RuntimeError("ไม่พบจอ (ต้องสร้าง QApplication ก่อน)")
+    size, dpr = screen.size(), screen.devicePixelRatio()
+    return ScreenGeometry(0, 0, round(size.width() * dpr), round(size.height() * dpr))
+
+
+class PointerTracker:
+    """ตำแหน่งเคอร์เซอร์ที่ตาม "เป้า" (ตำแหน่งมือที่ map แล้ว) ด้วย gain ที่ปรับได้
+
+    - ``gain = 1``: เคอร์เซอร์อยู่ที่เป้าพอดี (absolute mapping)
+    - ``gain < 1`` (pinch-lock): เคอร์เซอร์ขยับแค่บางส่วนของที่มือขยับ จึงเกิดระยะห่างจากเป้า
+    - เมื่อ gain กลับเป็น 1 เคอร์เซอร์จะไม่กระโดดกลับไปที่เป้า แต่ค่อยๆ เก็บระยะห่างคืนตามที่มือขยับ
+      (``RECONVERGE`` ของระยะที่ขยับแต่ละเฟรม) มืออยู่นิ่ง เคอร์เซอร์ก็นิ่ง
+    """
+
+    RECONVERGE = 0.5
+
+    def __init__(self, screen: ScreenGeometry) -> None:
+        self._screen = screen
+        self._pos: tuple[float, float] | None = None
+        self._target: tuple[float, float] | None = None
+
+    @property
+    def position(self) -> tuple[float, float] | None:
+        return self._pos
+
+    def reset(self) -> None:
+        """ลืมตำแหน่งทั้งหมด — update ครั้งถัดไปจะวางเคอร์เซอร์ที่เป้าทันที"""
+        self._pos = None
+        self._target = None
+
+    def rebase(self, target: tuple[float, float]) -> None:
+        """ตั้งเป้าใหม่โดยไม่ขยับเคอร์เซอร์ (ใช้หลังช่วงที่ตรึงเคอร์เซอร์ไว้ เช่นตอนสกรอล)"""
+        if self._pos is None:
+            self._pos = self._screen.clamp(*target)
+        self._target = target
+
+    def jump_to(self, x: float, y: float) -> None:
+        """ย้ายเคอร์เซอร์ไปตำแหน่งที่กำหนดโดยไม่เปลี่ยนเป้า"""
+        self._pos = self._screen.clamp(x, y)
+
+    def update(self, target: tuple[float, float], gain: float = 1.0) -> tuple[float, float]:
+        if self._pos is None or self._target is None:
+            self._target = target
+            self._pos = self._screen.clamp(*target)
+            return self._pos
+
+        dx, dy = target[0] - self._target[0], target[1] - self._target[1]
+        self._target = target
+        x, y = self._pos[0] + gain * dx, self._pos[1] + gain * dy
+
+        if gain >= 1.0:
+            off_x, off_y = target[0] - x, target[1] - y
+            offset = math.hypot(off_x, off_y)
+            if offset > 0.0:
+                step = min(offset, self.RECONVERGE * math.hypot(dx, dy))
+                x += off_x / offset * step
+                y += off_y / offset * step
+
+        self._pos = self._screen.clamp(x, y)
+        return self._pos

@@ -7,6 +7,8 @@ import pytest
 
 from aether import camera
 from aether.camera import CameraError, CameraThread, FpsMeter
+from aether.gestures import EngineSnapshot
+from aether.pipeline import FrameResult
 from aether.tracker import HandFrame
 
 # ---- FpsMeter ----------------------------------------------------------- #
@@ -82,8 +84,9 @@ class FakeSource:
         self.closed += 1
 
 
-def _empty_frame(frame, timestamp_ms: int) -> HandFrame:
-    return HandFrame(timestamp_ms, frame.shape[1], frame.shape[0])
+def _empty_frame(frame, timestamp_ms: int) -> FrameResult:
+    """processor ปลอม: ไม่เจอมือ engine อยู่สถานะเริ่มต้น"""
+    return FrameResult(HandFrame(timestamp_ms, frame.shape[1], frame.shape[0]), EngineSnapshot())
 
 
 def _wait_until(qapp, condition, timeout: float = 5.0) -> bool:
@@ -128,7 +131,7 @@ def test_thread_delivers_packets_with_increasing_timestamps(qapp):
     assert timestamps == sorted(timestamps)
     packet = packets[-1]
     assert packet.image.shape == (480, 640, 3)
-    assert (packet.hands.width, packet.hands.height) == (640, 480)
+    assert (packet.result.hands.width, packet.result.hands.height) == (640, 480)
     assert packet.process_ms >= 0.0
     assert packet.fps > 0.0
 
@@ -153,7 +156,7 @@ def test_ui_is_not_flooded_when_it_does_not_consume(qapp):
     qapp.processEvents()
 
     assert len(notifications) == 1
-    assert thread.latest().hands.timestamp_ms == processed[-1]  # ยังได้เฟรมล่าสุดเสมอ
+    assert thread.latest().result.hands.timestamp_ms == processed[-1]  # ยังได้เฟรมล่าสุดเสมอ
 
 
 def test_open_failure_is_reported_once_then_recovers(qapp, fast_retry):

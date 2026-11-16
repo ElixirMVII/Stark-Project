@@ -22,6 +22,7 @@ def test_empty_config_uses_defaults():
     assert config.pointer.active_region == (0.15, 0.10, 0.85, 0.70)
     assert config.pinch.on == 0.25 and config.pinch.off == 0.38
     assert config.hotkeys.toggle_arm == "<ctrl>+<alt>+g"
+    assert config.scroll.invert is False
 
 
 def test_partial_override_keeps_other_defaults():
@@ -65,6 +66,10 @@ def test_active_region_becomes_tuple():
         ({"gestures": {"zoom_step": 0}}, "zoom_step"),
         ({"actions": {"swipe_up": "  "}}, "actions.swipe_up"),
         ({"hotkeys": {"quit": "<ctrl>+<alt>+g"}}, "hotkeys"),  # ซ้ำกับ toggle_arm
+        ({"hotkeys": {"quit": "ctrl+alt+G"}}, "hotkeys"),  # ซ้ำกับ toggle_arm (เขียนคนละแบบ)
+        ({"hotkeys": {"toggle_arm": "g"}}, "hotkeys.toggle_arm"),  # ไม่มี modifier
+        ({"hotkeys": {"quit": "<ctrl>+<nope>"}}, "hotkeys.quit"),
+        ({"scroll": {"invert": "yes"}}, "scroll.invert"),
         ({"hud": {"primary": "cyan"}}, "hud.primary"),
         ({"hud": {"opacity": 1.1}}, "hud.opacity"),
         ({"hud": {"volume": -0.1}}, "hud.volume"),

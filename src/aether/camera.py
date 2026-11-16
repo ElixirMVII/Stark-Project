@@ -1,7 +1,7 @@
 """อ่านเฟรมจากกล้องใน ``QThread`` แล้วประมวลผลต่อใน thread เดียวกัน
 
 Data flow ใน worker thread: ``FrameSource.read()`` → ``processor(frame, timestamp_ms)``
-→ :class:`FramePacket` ฝั่ง UI ไม่ได้รับทุกเฟรมผ่าน signal queue แต่ถูกปลุกด้วย
+(คือ :meth:`aether.pipeline.Pipeline.process`) → :class:`FramePacket` ฝั่ง UI ไม่ได้รับทุกเฟรมผ่าน signal queue แต่ถูกปลุกด้วย
 ``frame_ready`` แล้วมาหยิบ packet ล่าสุดด้วย :meth:`CameraThread.latest` ถ้า UI วาดไม่ทัน
 เฟรมเก่าจะถูกทิ้ง ไม่มี queue สะสมจนภาพหน่วง
 
@@ -23,7 +23,7 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 from .config import CameraConfig
-from .tracker import HandFrame
+from .pipeline import FrameResult
 
 __all__ = [
     "CameraError",
@@ -143,9 +143,9 @@ class FramePacket:
     """ผลของหนึ่งเฟรมที่ worker ส่งให้ UI"""
 
     image: np.ndarray  # BGR (flip แล้วถ้าเปิด mirror) — ผู้รับห้ามแก้ไข
-    hands: HandFrame
+    result: FrameResult
     captured_at: float  # time.perf_counter() ตอนได้เฟรมจากกล้อง
-    process_ms: float  # เวลาที่ใช้ใน processor
+    process_ms: float  # เวลาตั้งแต่ได้เฟรมจนส่ง input ให้ OS เสร็จ (latency เฟรม→input)
     fps: float
 
 
@@ -165,7 +165,7 @@ class CameraThread(QThread):
     def __init__(
         self,
         source: FrameSource,
-        processor: Callable[[np.ndarray, int], HandFrame],
+        processor: Callable[[np.ndarray, int], FrameResult],
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -192,7 +192,6 @@ class CameraThread(QThread):
     # ---- ฝั่ง worker thread --------------------------------------------- #
 
     def run(self) -> None:
-        epoch = time.perf_counter()
         while not self.isInterruptionRequested():
             try:
                 description = self._source.open()
@@ -206,7 +205,7 @@ class CameraThread(QThread):
             self._last_error = None
             self.camera_opened.emit(description)
             try:
-                keep_going = self._capture_loop(epoch)
+                keep_going = self._capture_loop()
             finally:
                 self._source.close()
             if not keep_going:
@@ -215,7 +214,7 @@ class CameraThread(QThread):
             if self._sleep(REOPEN_INTERVAL_S):
                 break
 
-    def _capture_loop(self, epoch: float) -> bool:
+    def _capture_loop(self) -> bool:
         """วนอ่านเฟรม คืน ``True`` ถ้ากล้องหลุด (ให้ลองเปิดใหม่) ``False`` ถ้าต้องหยุด thread"""
         meter = FpsMeter()
         failures = 0
@@ -230,9 +229,10 @@ class CameraThread(QThread):
                 continue
             failures = 0
 
-            timestamp_ms = int((captured_at - epoch) * 1000)
+            # ฐานเวลาเดียวกับ pipeline.clock_ms() เพื่อให้ watchdog เทียบกับ timestamp ของเฟรมได้
+            timestamp_ms = int(captured_at * 1000)
             try:
-                hands = self._processor(frame, timestamp_ms)
+                result = self._processor(frame, timestamp_ms)
             except Exception as exc:
                 log.exception("frame processor failed")
                 self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -242,7 +242,7 @@ class CameraThread(QThread):
             self._publish(
                 FramePacket(
                     image=frame,
-                    hands=hands,
+                    result=result,
                     captured_at=captured_at,
                     process_ms=(done_at - captured_at) * 1000.0,
                     fps=meter.tick(captured_at),

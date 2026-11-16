@@ -15,6 +15,8 @@ import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .hotkeys import parse_hotkey
+
 __all__ = [
     "ActionsConfig",
     "CameraConfig",
@@ -138,6 +140,7 @@ class PinchConfig:
 class ScrollConfig:
     speed: float = 1.0
     deadzone: float = 0.01
+    invert: bool = False  # true = กลับทิศ (มือขึ้น = เลื่อนลง แบบ "ดันหน้ากระดาษ")
 
     def __post_init__(self) -> None:
         _require(self.speed > 0, "scroll.speed ต้อง > 0")
@@ -183,10 +186,14 @@ class HotkeysConfig:
     quit: str = "<ctrl>+<alt>+q"
 
     def __post_init__(self) -> None:
+        parsed = []
         for f in dataclasses.fields(self):
-            _require(bool(getattr(self, f.name).strip()), f"hotkeys.{f.name} ต้องไม่ว่าง")
+            try:
+                parsed.append(parse_hotkey(getattr(self, f.name)))
+            except ValueError as exc:
+                raise ConfigError(f"hotkeys.{f.name}: {exc}") from exc
         _require(
-            self.toggle_arm != self.quit,
+            len(set(parsed)) == len(parsed),
             "hotkeys.toggle_arm กับ hotkeys.quit ต้องไม่ซ้ำกัน",
         )
 
