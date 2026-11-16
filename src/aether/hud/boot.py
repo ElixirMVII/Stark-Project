@@ -1,0 +1,112 @@
+"""แอนิเมชันตอนเปิดแอป: วงแหวนขยายออกจากกลางจอ + ข้อความ "SYSTEM ONLINE" (~1.5 วินาที)"""
+
+from __future__ import annotations
+
+import math
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QPainter, QPainterPath, QPen
+
+from .theme import Theme, arc_path, glow_stroke, with_alpha
+
+__all__ = ["BootSequence"]
+
+DURATION = 1.5
+FADE_OUT = 0.3  # วินาทีสุดท้ายที่ทั้งหมดจางหาย
+TEXT = "SYSTEM ONLINE"
+RING_RADII = (96.0, 176.0, 264.0)
+RING_STAGGER = 0.12  # แต่ละวงเริ่มช้ากว่าวงก่อนหน้า (สัดส่วนของ DURATION)
+TICK_RADIUS = 214.0
+TICKS = 48
+HALF_EXTENT = RING_RADII[-1] + 24.0
+
+
+def _ease_out(t: float) -> float:
+    t = min(max(t, 0.0), 1.0)
+    return 1.0 - (1.0 - t) ** 3
+
+
+class BootSequence:
+    def __init__(self, theme: Theme) -> None:
+        self._theme = theme
+        self._started: float | None = None
+        self._center = QPointF()
+
+    def start(self, now: float, center: QPointF) -> None:
+        self._started = now
+        self._center = QPointF(center)
+
+    def active(self, now: float) -> bool:
+        return self._started is not None and now - self._started < DURATION
+
+    def advance(self, now: float) -> bool:
+        if self._started is not None and now - self._started >= DURATION:
+            self._started = None
+        return self._started is not None
+
+    def rect(self) -> QRectF:
+        if self._started is None:
+            return QRectF()
+        c = self._center
+        return QRectF(c.x() - HALF_EXTENT, c.y() - HALF_EXTENT, HALF_EXTENT * 2, HALF_EXTENT * 2)
+
+    def paint(self, painter: QPainter, now: float) -> None:
+        if self._started is None:
+            return
+        elapsed = now - self._started
+        if not 0.0 <= elapsed < DURATION:
+            return
+        t = elapsed / DURATION
+        fade = min(1.0, (DURATION - elapsed) / FADE_OUT)
+        theme = self._theme
+        color = theme.primary
+        cx, cy = self._center.x(), self._center.y()
+
+        # วงแหวนขยายออกจากกลางจอ ทีละวง
+        for index, target in enumerate(RING_RADII):
+            local = (t - index * RING_STAGGER) / 0.55
+            if local <= 0.0:
+                continue
+            radius = target * _ease_out(local)
+            ring = QPainterPath()
+            ring.addEllipse(self._center, radius, radius)
+            glow_stroke(
+                painter, ring, color, 1.6 if index else 2.2, alpha=fade * (0.9 - 0.2 * index)
+            )
+
+        # ส่วนโค้งสีอำพันกวาดรอบวงกลาง
+        sweep = 300.0 * _ease_out((t - 0.1) / 0.6)
+        if sweep > 0.0:
+            arc = arc_path(cx, cy, RING_RADII[1] - 14.0, -150.0, sweep)
+            glow_stroke(painter, arc, theme.accent, 2.0, strength=0.8, alpha=fade * 0.9)
+
+        # tick รอบวง ทยอยปรากฏตามเข็มนาฬิกา
+        shown = int(TICKS * _ease_out((t - 0.15) / 0.55))
+        painter.setPen(QPen(with_alpha(color, 0.7 * fade), 1.2))
+        for i in range(shown):
+            angle = math.radians(i * 360.0 / TICKS)
+            dx, dy = math.sin(angle), -math.cos(angle)
+            length = 12.0 if i % 4 == 0 else 6.0
+            painter.drawLine(
+                QPointF(cx + dx * TICK_RADIUS, cy + dy * TICK_RADIUS),
+                QPointF(cx + dx * (TICK_RADIUS + length), cy + dy * (TICK_RADIUS + length)),
+            )
+
+        # ข้อความ: ทยอยขึ้นทีละตัวอักษร ขนาบด้วยเส้นแนวนอนที่ยืดออก
+        reveal = _ease_out((t - 0.22) / 0.4)
+        letters = math.ceil(len(TEXT) * reveal)
+        if letters > 0:
+            painter.setFont(theme.display_font(30, 800, spacing=7.0))
+            metrics = painter.fontMetrics()
+            full_width = metrics.horizontalAdvance(TEXT)
+            text_rect = QRectF(cx - full_width / 2, cy - 24.0, full_width + 8.0, 48.0)
+            painter.setPen(with_alpha(color, fade))
+            flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            painter.drawText(text_rect, flags, TEXT[:letters])
+
+            half = (full_width / 2 + 18.0) * reveal
+            line = QPainterPath()
+            for y in (cy - 30.0, cy + 30.0):
+                line.moveTo(cx - half, y)
+                line.lineTo(cx + half, y)
+            glow_stroke(painter, line, color, 1.2, strength=0.7, alpha=fade * 0.8)

@@ -11,7 +11,7 @@ from test_actions import RecordingBackend
 from test_hotkeys import FakeApi
 
 from aether.app import AetherApp, Options
-from aether.config import Config
+from aether.config import parse_config
 from aether.gestures import State
 from aether.hotkeys import HotkeyManager
 from aether.mapping import ScreenGeometry
@@ -53,17 +53,17 @@ class BlankCamera:
 
 
 class Harness:
-    def __init__(self, qapp, *, debug: bool = False) -> None:
+    def __init__(self, qapp, *, debug: bool = False, hud: bool = False) -> None:
         self.qapp = qapp
         self.tracker = ScriptedTracker()
         self.camera = BlankCamera()
         self.backend = RecordingBackend()
         self.api = FakeApi()
-        config = Config()
+        config = parse_config({"hud": {"sounds": False}})
         self.quit_requests: list[int] = []
         self.app = AetherApp(
             config,
-            Options(debug=debug),
+            Options(debug=debug, no_hud=not hud),
             self.tracker,
             source=self.camera,
             backend=self.backend,
@@ -202,5 +202,73 @@ def test_debug_view_shows_armed_state(qapp):
         assert h.wait(lambda: view._armed is True)
         image = view.grab().toImage()  # วาดได้จริงโดยไม่ error
         assert image.width() > 0
+    finally:
+        h.app.shutdown()
+
+
+# ---- HUD ----------------------------------------------------------------- #
+
+
+def test_hud_is_created_by_default_and_follows_the_pipeline(qapp):
+    h = Harness(qapp, hud=True)
+    hud = h.app.hud
+    assert hud is not None
+    h.app.start()
+    try:
+        assert hud.isVisible()
+        assert h.wait(lambda: h.app.latest_packet is not None)
+        assert h.wait(lambda: hud._reticle.position is not None)  # ตามมือแม้ยัง DISARMED
+        assert hud._badge._armed is False
+
+        h.api.fire(1)  # arm ด้วย hotkey
+        assert h.wait(lambda: hud._badge._armed is True)
+        assert h.wait(lambda: hud._badge._mode == "POINTER")
+
+        time.sleep(0.15)
+        h.tracker.hand = make_hand(pinch=PINCHED)
+        assert h.wait(lambda: h.state() is State.PINCH_PENDING)
+        time.sleep(0.08)
+        h.tracker.hand = make_hand(pinch=OPEN)
+        assert h.wait(lambda: len(hud._reticle._shockwaves) > 0)  # คลิก → shockwave
+        position = hud._reticle.position
+        dpr = qapp.primaryScreen().devicePixelRatio()
+        assert (position.x(), position.y()) == pytest.approx((960 / dpr, 540 / dpr), abs=3)
+    finally:
+        h.app.shutdown()
+    assert not hud.isVisible()
+
+
+def test_hud_can_be_disabled_by_flag_or_config(qapp):
+    by_flag = Harness(qapp, hud=False)
+    assert by_flag.app.hud is None
+    by_flag.app.shutdown()
+
+    tracker = ScriptedTracker()
+    by_config = AetherApp(
+        parse_config({"hud": {"enabled": False}}),
+        Options(),
+        tracker,
+        source=BlankCamera(),
+        backend=RecordingBackend(),
+        screen=FHD,
+        hotkeys=HotkeyManager({"<ctrl>+<alt>+g": lambda: None}, api=FakeApi()),
+    )
+    assert by_config.hud is None
+    by_config.shutdown()
+
+
+def test_camera_error_shows_alert_on_hud(qapp):
+    h = Harness(qapp, hud=True)
+
+    class DeadCamera(BlankCamera):
+        def open(self) -> str:
+            from aether.camera import CameraError
+
+            raise CameraError("เปิดกล้องไม่ได้ (test)")
+
+    h.app._thread._source = DeadCamera()
+    h.app.start()
+    try:
+        assert h.wait(lambda: h.app.hud._badge._alert == "CAMERA LOST")
     finally:
         h.app.shutdown()

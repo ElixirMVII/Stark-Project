@@ -1,12 +1,13 @@
 """QApplication และการเชื่อม signal ระหว่าง worker thread, hotkey และ UI
 
-สถานะตอนนี้ (M1): กล้อง → tracker → gesture engine → input ของ OS + debug view (ยังไม่มี HUD)
+สถานะตอนนี้ (M2): กล้อง → tracker → gesture engine → input ของ OS, แสดงผลด้วย HUD overlay
+(และหน้าต่าง debug ถ้าใส่ ``--debug``)
 
 Thread ที่เกี่ยวข้อง:
 
 - **worker** (:class:`~aether.camera.CameraThread`): อ่านกล้อง จับมือ ตัดสินท่า และส่ง input ให้ OS
 - **hotkey**: สลับ ARM/DISARM ได้ทันทีโดยไม่รอ UI
-- **UI** (main): วาด debug view และรัน watchdog ที่ปล่อยปุ่มเมาส์ถ้ากล้องค้าง
+- **UI** (main): วาด HUD / debug view เล่นเสียง และรัน watchdog ที่ปล่อยปุ่มเมาส์ถ้ากล้องค้าง
 """
 
 from __future__ import annotations
@@ -23,12 +24,15 @@ from PySide6.QtWidgets import QApplication
 from . import __version__
 from .actions import ActionExecutor, InputBackend, create_backend, double_click_time_ms
 from .camera import CameraThread, FramePacket, FrameSource, OpenCVCamera
-from .config import Config, ConfigError, load_config, model_path
+from .config import Config, ConfigError, assets_dir, load_config, model_path
 from .debug_view import DebugView
 from .gestures import EventKind, GestureEngine, GestureEvent
 from .hotkeys import HotkeyManager, parse_hotkey
+from .hud.overlay import HudOverlay
+from .hud.theme import Theme
 from .mapping import ScreenGeometry, primary_screen_geometry
 from .pipeline import Pipeline
+from .sound import SoundPlayer
 from .tracker import HandTracker
 
 __all__ = ["AetherApp", "Options", "run"]
@@ -82,11 +86,8 @@ class AetherApp(QObject):
         else:
             self._dry_run = options.dry_run
         self._executor = ActionExecutor(backend)
-        self._engine = GestureEngine(
-            config,
-            screen or primary_screen_geometry(),
-            double_click_ms=double_click_time_ms(),
-        )
+        screen = screen or primary_screen_geometry()
+        self._engine = GestureEngine(config, screen, double_click_ms=double_click_time_ms())
         # event มาจาก worker/hotkey thread → ส่งต่อเป็น Qt signal เพื่อให้ไปถึง UI thread
         self._pipeline = Pipeline(
             tracker.process, self._engine, self._executor, on_events=self.gesture_events.emit
@@ -120,6 +121,19 @@ class AetherApp(QObject):
             self._debug_view.closed.connect(QApplication.quit)
             self.armed_changed.connect(self._debug_view.set_armed)
 
+        self._hud: HudOverlay | None = None
+        if config.hud.enabled and not options.no_hud:
+            sounds = SoundPlayer(
+                assets_dir() / "sounds", enabled=config.hud.sounds, volume=config.hud.volume
+            )
+            self._hud = HudOverlay(
+                config,
+                screen,
+                dry_run=self._dry_run,
+                theme=Theme.from_config(config.hud, assets_dir() / "fonts"),
+                sounds=sounds,
+            )
+
         # ถ้ากล้องค้าง worker จะปล่อยปุ่มเมาส์เองไม่ได้ จึงให้ UI thread คอยเช็ก
         self._watchdog = QTimer(self)
         self._watchdog.setInterval(WATCHDOG_INTERVAL_MS)
@@ -132,6 +146,10 @@ class AetherApp(QObject):
     @property
     def debug_view(self) -> DebugView | None:
         return self._debug_view
+
+    @property
+    def hud(self) -> HudOverlay | None:
+        return self._hud
 
     @property
     def latest_packet(self) -> FramePacket | None:
@@ -165,10 +183,12 @@ class AetherApp(QObject):
             " [dry-run: ไม่ส่ง input จริง]" if self._dry_run else "",
         )
 
+        if self._hud is not None:
+            self._hud.start()
         if self._debug_view is not None:
             self._debug_view.show()
-        else:
-            self._stats_timer.start()
+        if self._hud is None and self._debug_view is None:
+            self._stats_timer.start()  # ไม่มีอะไรแสดงผล: log สถานะลง console แทน
         self._watchdog.start()
         self._thread.start()
 
@@ -182,6 +202,8 @@ class AetherApp(QObject):
             self._tracker.close()
         else:
             log.warning("camera thread did not stop in time; skipping tracker cleanup")
+        if self._hud is not None:
+            self._hud.stop()
         if self._debug_view is not None:
             self._debug_view.closed.disconnect(QApplication.quit)
             self._debug_view.close()
@@ -193,10 +215,14 @@ class AetherApp(QObject):
         if packet is None:
             return
         self._packet = packet
+        if self._hud is not None:
+            self._hud.show_packet(packet)
         if self._debug_view is not None and self._debug_view.isVisible():
             self._debug_view.show_packet(packet)
 
     def _on_gesture_events(self, events: tuple[GestureEvent, ...]) -> None:
+        if self._hud is not None:
+            self._hud.handle_events(events)  # shockwave + เสียง + ป้ายสถานะ
         for event in events:
             if event.kind is EventKind.ARMED:
                 log.info("ARMED — มือคุมเมาส์แล้ว")
@@ -208,19 +234,25 @@ class AetherApp(QObject):
                 log.debug("event: %s", event)
 
     def _on_camera_opened(self, description: str) -> None:
+        if self._hud is not None:
+            self._hud.set_alert(None)
         if self._debug_view is not None:
             self._debug_view.set_camera_info(description)
 
     def _on_camera_error(self, message: str) -> None:
+        if self._hud is not None:
+            self._hud.set_alert("CAMERA LOST")
         if self._debug_view is not None:
             self._debug_view.show_message(message)
 
     def _on_failed(self, message: str) -> None:
         log.error("pipeline stopped: %s", message)
         self._pipeline.shutdown()
+        if self._hud is not None:
+            self._hud.set_alert("PIPELINE ERROR")
         if self._debug_view is not None:
             self._debug_view.show_message(f"pipeline หยุดทำงาน\n{message}\n(ดูรายละเอียดใน console)")
-        else:
+        elif self._hud is None:
             QApplication.exit(1)
 
     def _log_stats(self) -> None:
