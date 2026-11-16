@@ -1,0 +1,59 @@
+# AETHER — ค่าที่ปรับได้ทั้งหมด
+# แก้ไฟล์นี้แล้วเปิดแอปใหม่ (key ที่พิมพ์ผิดจะถูกแจ้ง error ตอนเปิด ไม่ถูกข้ามเงียบๆ)
+
+[camera]
+index = 0
+width = 640
+height = 480
+fps = 30
+mirror = true               # flip แนวนอนเหมือนส่องกระจก (แนะนำให้เปิดไว้)
+
+[tracking]
+dominant_hand = "right"     # "left" | "right"
+num_hands = 2
+min_gesture_score = 0.6
+vote_window = 5
+
+[pointer]
+active_region = [0.15, 0.10, 0.85, 0.70]   # x0, y0, x1, y1 (normalized)
+one_euro = { min_cutoff = 1.0, beta = 0.02, d_cutoff = 1.0 }
+pinch_lock_gain = 0.2
+
+[pinch]
+on = 0.25
+off = 0.38
+drag_hold_ms = 250
+
+[scroll]
+speed = 1.0
+deadzone = 0.01
+
+[gestures]
+swipe_dist_x = 0.25
+swipe_dist_y = 0.20
+swipe_window_ms = 300
+cooldown_ms = 800
+fist_hold_ms = 600
+arm_hold_ms = 1000
+zoom_step = 0.06
+
+[actions]
+swipe_left  = "ctrl+win+left"
+swipe_right = "ctrl+win+right"
+swipe_up    = "win+tab"
+swipe_down  = "win+d"
+fist_hold   = "minimize_foreground"
+
+[hotkeys]
+toggle_arm = "<ctrl>+<alt>+g"
+quit       = "<ctrl>+<alt>+q"
+
+[hud]
+enabled = true
+opacity = 0.9
+primary = "#00E5FF"
+accent  = "#FFB300"
+show_telemetry = true
+show_radar = true
+sounds = true
+volume = 0.5

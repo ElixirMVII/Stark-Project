@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aether"
+version = "0.1.0"
+description = "ควบคุม Windows ด้วยมือผ่านเว็บแคม + HUD โฮโลแกรม"
+readme = "README.md"
+# MediaPipe รองรับ Python 3.9–3.12 เท่านั้น (อย่าใช้ 3.13/3.14)
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # mediapipe ดึง opencv-contrib-python มาเองอยู่แล้ว (ให้ `cv2`)
+    # ห้ามเพิ่ม opencv-python ที่นี่ เพราะจะชนกัน (ดู docs/DECISIONS.md)
+    "mediapipe~=1.2",
+    "PySide6>=6.7",
+    "pynput>=1.7",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "soundfile>=0.12",   # ใช้ใน tools/convert_sounds.py เท่านั้น
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100

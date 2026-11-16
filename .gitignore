@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Build (PyInstaller)
+build/
+dist/
+
+# Asset ที่โหลดด้วย tools/download_assets.py (ไม่เก็บ binary ใน git)
+assets/_downloads/
+assets/models/*.task
+assets/fonts/*.ttf
+assets/fonts/OFL-*.txt
+assets/sounds/*.wav
+
+# ข้อมูลเฉพาะเครื่อง
+calibration.json
+logs/
+*.log
