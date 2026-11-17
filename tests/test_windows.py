@@ -222,37 +222,53 @@ def test_monitors_are_enumerated_in_physical_pixels(qapp):
     assert all(screen is not None for screen in matched)
 
 
-def test_window_under_point_can_be_grabbed_and_moved(qapp):
-    """หยิบหน้าต่างจริงด้วย WindowFromPoint + ขยับด้วย SetWindowPos (ใช้หน้าต่าง Qt ของ test เอง)"""
-    from PySide6.QtWidgets import QWidget
+def _native_test_window():
+    """หน้าต่าง Win32 จริงที่อยู่บนสุด (สร้างด้วย CreateWindowExW — ไม่พึ่ง Qt ซึ่ง test รันแบบ offscreen)"""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.CreateWindowExW.argtypes = (
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+    )  # fmt: skip
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = (
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.UINT,
+    )  # fmt: skip
+    user32.DestroyWindow.argtypes = (wintypes.HWND,)
+    ws_overlapped_window, ws_visible = 0x00CF0000, 0x10000000
+    hwnd = user32.CreateWindowExW(
+        0, "STATIC", "AETHER grab test", ws_overlapped_window | ws_visible,
+        200, 200, 400, 300, None, None, None, None,
+    )  # fmt: skip
+    if hwnd:
+        hwnd_topmost = wintypes.HWND(-1)
+        user32.SetWindowPos(hwnd, hwnd_topmost, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+    return user32, hwnd
 
+
+def test_window_under_point_can_be_grabbed_and_moved():
+    """หยิบหน้าต่างจริงด้วย WindowFromPoint + ขยับด้วย SetWindowPos"""
     from aether.actions import win32_grab_window, win32_move_window, win32_window_rect
 
-    window = QWidget()
-    window.setWindowTitle("AETHER grab test")
-    window.setGeometry(200, 200, 400, 300)
-    window.show()
-    window.raise_()
-    window.activateWindow()
-    for _ in range(20):
-        qapp.processEvents()
-        time.sleep(0.02)
-    hwnd = int(window.winId())
-    rect = win32_window_rect(hwnd)
-    assert rect is not None
-    center = ((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
+    user32, hwnd = _native_test_window()
+    if not hwnd:
+        pytest.skip(f"สร้างหน้าต่างทดสอบไม่ได้ (error {ctypes.get_last_error()})")
     try:
+        rect = win32_window_rect(hwnd)
+        assert rect is not None and rect[2] > rect[0] and rect[3] > rect[1]
+        center = ((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
         assert win32_grab_window(*center) is None  # หน้าต่างของ process ตัวเองห้ามหยิบ
         grabbed = win32_grab_window(*center, allow_own=True)
         if grabbed is None:
-            pytest.skip("มีหน้าต่างอื่นบังจุดกึ่งกลาง (session นี้วางหน้าต่าง test ไว้ข้างหลัง)")
+            pytest.skip("มีหน้าต่างอื่นบังจุดกึ่งกลางของหน้าต่างทดสอบ")
         assert grabbed == hwnd
         assert win32_move_window(hwnd, 37, 21)
         moved = win32_window_rect(hwnd)
         assert (moved[0] - rect[0], moved[1] - rect[1]) == (37, 21)
         assert (moved[2] - moved[0], moved[3] - moved[1]) == (rect[2] - rect[0], rect[3] - rect[1])
     finally:
-        window.close()
+        user32.DestroyWindow(hwnd)
 
 
 def test_desktop_is_never_grabbed():
