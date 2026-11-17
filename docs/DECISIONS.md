@@ -298,6 +298,11 @@ calibration แล้วออก (exit 0 = พร้อม, 2 = ใช้ไม
 - เพิ่ม hook สำหรับการรันอัตโนมัติ: `AETHER_NO_DIALOG=1` ไม่แสดงกล่องข้อความ และ `--check` เขียนผลลง log
   พร้อมบรรทัด `check result: OK|FAIL` (log ตอนปิดแอปมี `shutdown complete`)
 - repo เป็น public จึงใช้ Actions บน Windows ได้โดยไม่เสียโควตา
+- **ผลที่ยืนยันได้จาก CI (windows-latest):** test ที่ใช้ Win32 จริงผ่านทั้งหมดโดยไม่มีตัวไหน skip —
+  `RegisterHotKey` ลงทะเบียน/ชน/ถอนได้, ปุ่มลัดที่แอปส่งไปถึง OS เป็น hotkey จริงทั้งแป้นอังกฤษและ
+  **แป้นไทย** (D11, D27 ใช้ได้จริง), `SetCursorPos` ตรง physical px, `EnumDisplayMonitors`, libmediapipe.dll;
+  `aether.exe` ที่ build ได้ผ่าน `--check`, เปิดขึ้นได้ (HUD + tray + hotkey) และปิดเองเมื่อกด `Ctrl+Alt+Q`
+  (input จำลอง) — session ของ runner รับ input จำลองได้ test จึงไม่ต้อง skip
 
 ### D36 · หลายจอ (backlog ข้อแรก)
 - `pointer.screens = "primary"` (ค่าเริ่มต้น = พฤติกรรม v1) | `"all"` — key ใหม่ที่ไม่มีใน spec v1
