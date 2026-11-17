@@ -223,3 +223,59 @@ spec ให้ test ด้วย JSONL ที่อัดจาก `record_landm
 `synthetic_swipes/fist_hold/two_hand_zoom/arm_toggle.jsonl` จากมือจำลอง และ test จำลองการใช้งาน 5 นาที
 ที่โมเดลตอบท่าพิเศษผิดแวบๆ เกณฑ์ "ติด ≥ 9/10" และ "ติดเอง < 1 ครั้ง/5 นาที" ต้องวัดกับกล้องจริงตาม
 checklist ใน README แล้วอัดไฟล์จริงมาเพิ่ม (`--expect swipe_left=1` ฯลฯ, `--start-disarmed` สำหรับไฟล์ 🤟)
+
+## M4
+
+### D29 · โหลด config ใหม่ = สร้างชุดทำงานใหม่ทั้งชุด
+`AppController` (อยู่ตลอดอายุ process) เป็นเจ้าของ tray และ wizard ส่วน `AetherApp` คือหนึ่งชุดของ
+กล้อง + tracker + engine + HUD + hotkey ตาม config หนึ่งชุด เมนู "โหลด config ใหม่" จะ:
+อ่าน config ใหม่ → ถ้าผิด แจ้งเตือนและใช้ชุดเดิมต่อ → ถ้าถูก ปิดชุดเดิม (ปล่อยปุ่มเมาส์ก่อนเสมอ) แล้ว
+สร้างชุดใหม่ซึ่ง **เริ่มแบบ DISARMED** (เหมือนเปิดแอปใหม่ ตามกติกา "เริ่มแบบ DISARMED เสมอ") และไม่เล่น
+boot animation ซ้ำ เลือกวิธีนี้แทนการ patch ค่าทีละตัว เพราะค่าแทบทุกตัวกระจายอยู่หลายอ็อบเจกต์
+(กล้อง, tracker, filter, HUD theme, hotkey) — สร้างใหม่ทั้งชุดได้ผลถูกต้องแน่นอน แลกกับเวลาโหลดโมเดล ~1 วินาที
+
+### D30 · Calibration
+- วัด pinch_ratio ตอนพักและตอนจีบ (ขั้นละ 2 วินาที) แล้วตั้ง `pinch.on` เหนือค่าตอนจีบ (เปอร์เซ็นไทล์ 90)
+  ไม่เกิน 35% ของช่องว่างระหว่างสองท่า และ `pinch.off = 1.5 × on` (สัดส่วนเดียวกับค่าเริ่มต้น 0.25/0.38)
+  แต่ไม่เกิน 70% ของช่องว่าง ถ้าสองท่าห่างกันไม่ถึง 0.12 ถือว่าวัดไม่ได้ ให้ทำใหม่
+- active region = เปอร์เซ็นไทล์ 3–97 ของตำแหน่งมือตอนขยับให้ทั่ว หดขอบเข้า 5% ต้องกว้าง ≥ 25% และสูง ≥ 20%
+  ของเฟรม
+- `calibration.json` อยู่ข้าง `config.toml` และ **ทับ** 3 ค่านี้ตอนโหลด (ค่าอื่นยังมาจาก `config.toml`)
+  เลือกเก็บแยกไฟล์ตาม spec แทนการเขียนทับ `config.toml` ของผู้ใช้ — ลบไฟล์ = กลับค่าเดิม,
+  `--no-calibration` = ไม่ใช้ชั่วคราว
+- ระหว่างเปิด wizard แอปบังคับ DISARMED (ถ้ามีการ arm จะถูกปิดทันที) เพราะผู้ใช้จะจีบนิ้วซ้ำๆ
+- เวลาในแต่ละขั้นเดินเฉพาะตอนเห็นมือข้างถนัด และตัดช่วงเฟรมขาดที่นานเกิน 200ms ไม่ให้นับ
+- ตัวเลขทั้งหมดตั้งจากเหตุผลเชิงสัดส่วนและทดสอบกับมือจำลอง **ยังไม่ได้ปรับกับผู้ใช้จริง**
+
+### D31 · Path ของ build: ไฟล์ผู้ใช้ข้าง exe, asset ใน `_internal`
+- PyInstaller 6 วางไลบรารีและ data ไว้ใน `_internal\` (`sys._MEIPASS`) — `bundle_root()` ชี้ที่นั่น
+  (assets, config.toml ต้นฉบับ) ส่วน `app_root()` คือโฟลเดอร์ของ exe (config.toml ที่ผู้ใช้แก้,
+  calibration.json, logs) ตอนรันจาก source ทั้งสองคือ root ของ repo
+- spec คัดลอก `config.toml`, `README.md`, `LICENSES.md` ไปข้าง exe (ไม่ทับ config.toml ที่มีอยู่แล้ว)
+  ถ้าผู้ใช้ลบ config.toml ข้าง exe จะใช้ต้นฉบับใน bundle
+- log: `logs\` ข้าง exe ถ้าเขียนไม่ได้ใช้ `%LOCALAPPDATA%\AETHER\logs\`
+
+### D32 · exe แบบไม่มี console (windowed)
+spec ไม่ได้ระบุ — เลือก windowed เพราะเป็นแอป tray/HUD หน้าต่าง console ดำๆ จะเกะกะ ผลที่ตามมา:
+- log ทั้งหมดไปที่ไฟล์ และติดตั้ง `sys.excepthook`/`threading.excepthook` ให้ exception ที่หลุดมือลง log
+- ข้อความที่ต้องให้ผู้ใช้เห็นตอนเริ่ม (config ผิด, ไม่พบโมเดล, ผล `--check`) แสดงเป็นกล่องข้อความเมื่อไม่มี console
+- `python tools/build_exe.py --console` สำหรับ build ไว้ debug
+
+### D33 · การ collect ของ PyInstaller
+- mediapipe 1.x ไม่มี hook ใน pyinstaller-hooks-contrib และโหลด `libmediapipe.{dll,so}` จาก package
+  `mediapipe.tasks.c` ด้วย ctypes → spec ใช้ `collect_dynamic_libs("mediapipe")` + hidden import
+  `mediapipe.tasks.c` + `collect_data_files("mediapipe")`
+- mediapipe import `matplotlib` (ใน `drawing_utils`) จึงตัดออกไม่ได้ (~ไม่กี่สิบ MB) และ matplotlib log เรื่อง
+  font cache ที่ระดับ INFO จึงตั้ง logger ของ matplotlib เป็น WARNING
+- backend ของ pynput ถูก import แบบ dynamic → ใส่ hidden import ของ backend ตาม platform
+- ตัด tkinter, Qt WebEngine/Quick/Qml/Pdf/3D/Charts/Sql/Test/Bluetooth, pytest, soundfile
+- ไอคอนของ exe (`build\aether.ico`) วาดจากโค้ดเดียวกับไอคอน tray ตอน build — ไม่มีไฟล์รูปใน repo
+- **ยืนยันแล้วบน Linux:** build ผ่าน (~30 วินาที, ~620 MB) และ binary ที่ได้รันนอก source tree ได้:
+  `--check` โหลดโมเดลผ่าน libmediapipe ใน bundle, เจอฟอนต์ใน `_internal`, เปิดแอปแบบ offscreen แล้ว
+  เขียน `logs/aether.log` ข้าง binary และปิดได้เรียบร้อย
+- **ยังไม่ได้ยืนยันบน Windows** (เครื่อง dev เป็น Linux): ชื่อ `libmediapipe.dll`, plugin ของ QtMultimedia,
+  backend win32 ของ pynput และการรันบนเครื่องที่ไม่มี Python — อยู่ใน checklist M4 ของ README
+
+### D34 · `--check`
+เพิ่ม CLI option ที่ไม่มีใน spec: ตรวจ config, โหลดโมเดลแล้วประมวลผลเฟรมว่างหนึ่งเฟรม, ตรวจฟอนต์/เสียง/
+calibration แล้วออก (exit 0 = พร้อม, 2 = ใช้ไม่ได้) ไม่ต้องใช้กล้อง — ใช้ตรวจ build หรือการติดตั้งได้ทันที

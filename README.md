@@ -3,19 +3,19 @@
 ควบคุม Windows ด้วยมือผ่านเว็บแคม พร้อม HUD โฮโลแกรมแบบโปร่งใส
 ("AETHER" เป็นชื่อโค้ดเนม)
 
-> **สถานะ: M3 — ท่าพิเศษ**
-> ใช้มือคุมเมาส์ได้ครบ (ขยับ คลิก ดับเบิลคลิก ลาก คลิกขวา สกรอล) พร้อม HUD และเสียง และมีท่าพิเศษ:
-> แบมือปัด 4 ทิศ, กำมือค้างเพื่อย่อหน้าต่าง, จีบสองมือเพื่อซูม, 🤟 เพื่อ ARM/DISARM
-> เหลือ M4 (tray, calibration, build เป็น `.exe` — ดู [Milestones](#milestones))
+> **สถานะ: v1 ครบทุก milestone (M0–M4)**
+> ใช้มือคุมเมาส์ได้ครบ (ขยับ คลิก ดับเบิลคลิก ลาก คลิกขวา สกรอล) พร้อม HUD และเสียง มีท่าพิเศษ
+> (แบมือปัด 4 ทิศ, กำมือค้างเพื่อย่อหน้าต่าง, จีบสองมือเพื่อซูม, 🤟 เพื่อ ARM/DISARM),
+> system tray, calibration wizard และ build เป็น `aether.exe` ที่รันได้โดยไม่ต้องมี Python
 >
 > โค้ดผ่าน unit test ทั้งหมด แต่ **ยังไม่ได้ทดสอบกับกล้องจริงบน Windows** — ทำตาม
 > [checklist ทดสอบด้วยมือ](#ทดสอบด้วยมือ) ก่อนใช้งานจริง และเริ่มด้วย `--dry-run` เสมอ
 
 ## สิ่งที่ต้องมี
 
-- Windows 10/11
-- **Python 3.12 แบบ 64-bit** (MediaPipe ยังไม่รองรับ 3.13/3.14)
-- เว็บแคม
+- Windows 10/11 และเว็บแคม
+- **Python 3.12 แบบ 64-bit** (MediaPipe ยังไม่รองรับ 3.13/3.14) — เฉพาะตอนรันจาก source หรือ build เอง
+  ถ้าได้โฟลเดอร์ `aether\` ที่ build แล้ว ไม่ต้องลง Python (ดู [ใช้ build สำเร็จรูป](#ใช้-build-สำเร็จรูป-aetherexe))
 
 ## ติดตั้ง (PowerShell)
 
@@ -60,20 +60,61 @@ python tools\convert_sounds.py            # เลือกเสียง → �
 ## ใช้งาน
 
 ```powershell
+python -m aether --check              # ตรวจว่าทุกอย่างพร้อม (ไม่ใช้กล้อง)
+python -m aether --calibrate          # ครั้งแรก: วัดระยะจีบและพื้นที่เอื้อมของคุณ (ดูหัวข้อ Calibration)
 python -m aether --dry-run            # ลองก่อน: HUD ทำงานครบ แต่ไม่ส่ง input จริง
-python -m aether                      # ใช้จริง (HUD อย่างเดียว)
+python -m aether                      # ใช้จริง
 python -m aether --debug              # ใช้จริง + หน้าต่าง debug (ภาพกล้อง)
 ```
 
+(ถ้าใช้ build สำเร็จรูป แทน `python -m aether` ด้วย `aether.exe` เช่น `aether.exe --calibrate`)
+
 | ตัวเลือก | ความหมาย |
 |---|---|
-| `--debug` | เปิดหน้าต่าง debug: ภาพกล้อง + landmark + ชื่อท่า + สถานะ + FPS (ปิดหน้าต่าง = ปิดแอป) |
+| `--debug` | เปิดหน้าต่าง debug ตอนเริ่ม: ภาพกล้อง + landmark + ชื่อท่า + สถานะ + FPS |
 | `--dry-run` | ไม่ส่ง input ให้ OS จริง แค่ log ว่าจะคลิก/ลาก/สกรอลตรงไหน |
 | `--no-hud` | ไม่แสดง HUD และไม่เล่นเสียง |
 | `--config PATH` | ใช้ไฟล์ config อื่นแทน `config.toml` |
+| `--calibrate` | เปิด calibration wizard ตอนเริ่ม |
+| `--no-calibration` | ไม่ใช้ค่าที่ calibrate ไว้ (ใช้ค่าใน `config.toml` อย่างเดียว) |
+| `--check` | ตรวจ config, โมเดล, ฟอนต์, เสียง แล้วออก (ใช้ตรวจหลังติดตั้ง/build) |
 
-ปิดแอปด้วย `Ctrl+Alt+Q` (หรือ `Ctrl+C` ใน console) ถ้าปิดทั้ง HUD และ debug แอปจะ log สถานะลง
-console ทุก 5 วินาทีแทน
+ปิดแอปด้วย `Ctrl+Alt+Q`, เมนู **ออก** ใน tray หรือ `Ctrl+C` ใน console
+
+### System tray
+
+ไอคอน reticle ที่มุมขวาล่างของ taskbar (สีฟ้า = ARMED, สีเทา = DISARMED) คลิกขวาเพื่อเปิดเมนู:
+
+| เมนู | ผล |
+|---|---|
+| Arm / Disarm | สลับการคุมด้วยมือ (เหมือน `Ctrl+Alt+G`) |
+| หน้าต่าง Debug | เปิด/ปิดหน้าต่างภาพกล้อง (ปิดหน้าต่างแล้วแอปยังทำงานต่อ) |
+| Calibrate… | เปิด calibration wizard |
+| โหลด config ใหม่ | อ่าน `config.toml` + `calibration.json` ใหม่โดยไม่ต้องปิดแอป — เริ่มใหม่ในสถานะ DISARMED ถ้า config ผิดจะแจ้งเตือนและใช้ค่าเดิมต่อ |
+| ออก | ปิดแอป (ปล่อยปุ่มเมาส์ที่ค้างอยู่ก่อนเสมอ) |
+
+ถ้าเครื่องไม่มี system tray: ปิดหน้าต่าง debug = ปิดแอป
+
+### Calibration
+
+ระยะจีบและพื้นที่ที่เอื้อมถึงต่างกันในแต่ละคน (ขนาดมือ มุมกล้อง ระยะนั่ง) แนะนำให้ calibrate ครั้งแรก
+และทุกครั้งที่ย้ายกล้องหรือเปลี่ยนท่านั่ง: เมนู tray **Calibrate…** หรือ `--calibrate`
+
+1. **ท่าพัก** — ยกมือข้างถนัดในท่าที่ใช้ชี้ ปล่อยนิ้วตามสบาย ค้างไว้ ~2 วินาที
+2. **จีบนิ้ว** — แตะปลายนิ้วโป้งกับนิ้วชี้ ค้างไว้ ~2 วินาที
+3. **ระยะเอื้อม** — ขยับมือเป็นวงกว้างให้ทั่วบริเวณที่เอื้อมถึงสบายๆ ~6 วินาที
+
+แต่ละขั้นมีเวลาเตรียมตัว 1.5 วินาที และหยุดรอเองถ้าเอามือออกจากกล้อง ถ้าวัดแล้วแยกท่าไม่ออก
+wizard จะบอกให้ทำขั้นนั้นใหม่ จบแล้วบันทึก `calibration.json` (ข้าง `config.toml` / ข้าง `aether.exe`)
+และโหลดค่าใหม่ทันที — ค่าในไฟล์นี้ **ทับ** `pinch.on`, `pinch.off` และ `pointer.active_region` ใน
+`config.toml` ถ้าอยากกลับไปใช้ค่าใน `config.toml` ให้ลบ `calibration.json` หรือใช้ `--no-calibration`
+ระหว่างเปิด wizard มือจะไม่คุมเมาส์
+
+### Log
+
+log ทั้งหมดอยู่ที่ `logs\aether.log` (ข้าง `config.toml` / ข้าง `aether.exe`) หมุนไฟล์เมื่อเกิน ~1 MB
+เก็บย้อนหลัง 5 ไฟล์ ถ้าโฟลเดอร์นั้นเขียนไม่ได้ (เช่นวางไว้ใน Program Files) จะใช้
+`%LOCALAPPDATA%\AETHER\logs\` แทน — แนบไฟล์นี้มาด้วยเวลาแจ้งปัญหา
 
 ### เปิด/ปิดการคุมเมาส์ (ARM / DISARM)
 
@@ -204,6 +245,31 @@ key ที่พิมพ์ผิดหรือค่าที่อยู่�
 | `hud.show_telemetry` / `show_radar` | เปิด/ปิดแผง telemetry และ radar มือ | บังจอ / อยากลด CPU |
 | `hud.sounds` / `volume` | เปิดเสียง และความดัง 0–1 | |
 
+## Build เป็น `aether.exe`
+
+```powershell
+pip install -e ".[dev,build]"
+python tools\download_assets.py          # ต้องมีโมเดลและฟอนต์ก่อน (เสียงไม่บังคับ)
+python tools\build_exe.py                # → dist\aether\aether.exe
+dist\aether\aether.exe --check          # ตรวจ build (ขึ้นกล่องข้อความผลการตรวจ)
+```
+
+- ได้โฟลเดอร์ `dist\aether\` (~600 MB): `aether.exe`, `config.toml`, `README.md`, `LICENSES.md`
+  และ `_internal\` (ไลบรารี + โมเดล + ฟอนต์ + เสียง) — คัดลอกทั้งโฟลเดอร์ไปเครื่องอื่นได้เลย
+- build ใหม่ทับโฟลเดอร์เดิมได้ `config.toml` ที่แก้ไว้ข้าง exe จะไม่ถูกทับ
+- exe ไม่มีหน้าต่าง console (ดู log ที่ `logs\aether.log`) ถ้าต้องการ console ไว้ debug:
+  `python tools\build_exe.py --console`
+- build เองด้วย PyInstaller ตรงๆ ก็ได้: `pyinstaller packaging\aether.spec --noconfirm --clean`
+
+### ใช้ build สำเร็จรูป (`aether.exe`)
+
+1. คัดลอกโฟลเดอร์ `aether\` ไปไว้ที่ไหนก็ได้ที่เขียนไฟล์ได้ (เช่น `Documents\aether\`)
+2. ดับเบิลคลิก `aether.exe` — HUD ขึ้นพร้อม `SYSTEM ONLINE` และมีไอคอนใน tray
+3. ครั้งแรก: tray → **Calibrate…** แล้วกด `Ctrl+Alt+G` เพื่อเริ่มคุมด้วยมือ
+4. แก้ค่าได้ที่ `config.toml` ข้าง exe แล้ว tray → **โหลด config ใหม่**
+
+Windows SmartScreen อาจเตือนเพราะ exe ไม่ได้ลงลายเซ็น — กด *More info → Run anyway*
+
 ## ทดสอบ
 
 ```powershell
@@ -280,6 +346,18 @@ test ทั้งหมดรันได้โดยไม่ต้องมี
       ติดเองกี่ครั้ง — เกณฑ์ < 1 ครั้ง ถ้าติดเอง ให้จดว่าท่าไหนและตอนนั้นมืออยู่ท่าอะไร
 - [ ] หลังจบการซูม มือที่ยังจีบค้างอยู่ไม่ทำให้เกิดคลิกหรือลาก
 
+**M4 — Tray, calibration, build**
+
+- [ ] `python -m aether` → มีไอคอนใน tray เปลี่ยนสีตาม ARM/DISARM และ tooltip บอกสถานะ
+- [ ] เมนู tray ใช้ได้ครบ: Arm/Disarm, หน้าต่าง Debug (เปิด/ปิดแล้วแอปไม่ปิด), Calibrate…, โหลด config ใหม่, ออก
+- [ ] แก้ `config.toml` ให้ผิด (เช่น `on = 0.5` และ `off = 0.3`) แล้วโหลดใหม่ → มีแจ้งเตือน แอปทำงานต่อด้วยค่าเดิม
+- [ ] Calibrate ครบ 3 ขั้น → ได้ `calibration.json` และคลิกติดง่ายขึ้น/เอื้อมถึงขอบจอสบายขึ้น
+- [ ] ลบ `calibration.json` แล้วโหลด config ใหม่ → กลับไปใช้ค่าใน `config.toml`
+- [ ] มี `logs\aether.log` และมีบรรทัดใหม่ทุกครั้งที่เปิดแอป
+- [ ] `python tools\build_exe.py` สำเร็จ → `dist\aether\aether.exe --check` ขึ้น "พร้อมใช้งาน"
+- [ ] คัดลอก `dist\aether\` ไปเครื่องที่ **ไม่มี Python** แล้วดับเบิลคลิก `aether.exe` → HUD ขึ้น ใช้งานได้ครบ
+- [ ] build แล้วมีเสียง (ถ้ามีไฟล์เสียงตอน build) และฟอนต์ของ HUD เป็น Orbitron
+
 ถ้าข้อไหนไม่ผ่าน ช่วยแจ้งอาการพร้อมค่า `pinch` / สถานะที่เห็นในหน้าต่าง debug หรืออัด landmark
 ส่งมาก็ได้ (ไฟล์มีแต่ตัวเลข ไม่มีภาพ):
 
@@ -299,7 +377,7 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 | M1 | Pointer + คลิก + ลาก + สกรอล | ✅ โค้ดเสร็จ · รอทดสอบกับกล้องจริง |
 | M2 | HUD overlay + เสียง | ✅ โค้ดเสร็จ · รอทดสอบบน Windows จริง |
 | M3 | ท่าพิเศษ (swipe, กำมือ, ซูมสองมือ, 🤟) | ✅ โค้ดเสร็จ · รอทดสอบกับกล้องจริง |
-| M4 | Tray, calibration, build เป็น `.exe` | ยังไม่เริ่ม |
+| M4 | Tray, calibration, log, build เป็น `.exe` | ✅ โค้ดเสร็จ · build ผ่านบน Linux · รอ build/ทดสอบบน Windows |
 
 การตัดสินใจที่ต่างจาก spec จดไว้ใน [`docs/DECISIONS.md`](docs/DECISIONS.md)
 ที่มาและ license ของ asset อยู่ใน [`assets/LICENSES.md`](assets/LICENSES.md)
@@ -322,6 +400,11 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 | ✊ / 🤟 ไม่ติด | ต้องอยู่ในกรอบเส้นประ และค้างจนวงแหวนชาร์จเต็ม — ดูป้ายท่าในหน้าต่าง debug ว่าโมเดลเห็นเป็นท่าอะไร |
 | ท่าพิเศษติดเอง | เพิ่ม `gestures.fist_hold_ms` / `arm_hold_ms` / `swipe_dist_*` หรือปิดท่านั้นด้วย `actions.<ท่า> = "none"` |
 | ปัดซ้าย/ขวาแล้วไม่มีอะไรเกิด | ต้องมี virtual desktop มากกว่า 1 อัน (กด `Win+Ctrl+D` เพื่อสร้าง) |
+| ไม่เห็นไอคอนใน tray | Windows ซ่อนไว้ในลูกศร `^` ข้างนาฬิกา — ลากออกมาวางบน taskbar ได้ |
+| ดับเบิลคลิก `aether.exe` แล้วไม่มีอะไรขึ้น | ดู `logs\aether.log` ข้าง exe และรัน `aether.exe --check` |
+| `aether.exe` บอกว่าไม่พบโมเดล | ตอน build ยังไม่ได้รัน `tools\download_assets.py` — โหลดแล้ว build ใหม่ |
+| Calibrate แล้วขึ้น "แยกท่าพักกับท่าจีบไม่ออก" | ตอนพักให้นิ้วโป้งกับนิ้วชี้ห่างกันชัดเจน ตอนจีบให้ปลายนิ้วแตะกัน และหันฝ่ามือเข้าหากล้อง |
+| หลัง calibrate คลิกติดยาก/ติดเองกว่าเดิม | ลบ `calibration.json` (กลับไปใช้ค่าเดิม) แล้ว calibrate ใหม่ หรือแก้ค่าใน `config.toml` แล้วใช้ `--no-calibration` |
 | ไม่มีเสียง | ยังไม่ได้รัน `tools\convert_sounds.py` (console จะบอกว่าขาดไฟล์ไหน) หรือ `hud.sounds = false` |
 | HUD บังสิ่งที่อยากดู | ลด `hud.opacity` หรือปิด `hud.show_telemetry` / `hud.show_radar` |
 | reticle ไม่ตรงกับเคอร์เซอร์ | แจ้งค่า scale ของจอ (Settings > Display) และความละเอียดจอ |
@@ -344,4 +427,5 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 
 - ประมวลผลในเครื่องทั้งหมด ตอนรันแอปไม่มีการต่อ network
   (มีแค่ `tools\download_assets.py` ที่ต่อ network ตอนติดตั้ง)
-- ไม่บันทึกภาพจากกล้องลงดิสก์
+- ไม่บันทึกภาพจากกล้องลงดิสก์ — `calibration.json` เก็บแค่ตัวเลข threshold และพื้นที่, log เก็บแค่
+  สถานะและ event (ไม่มีภาพหรือพิกัด landmark), `tools\record_landmarks.py` เก็บแค่ตัวเลข landmark

@@ -23,6 +23,9 @@ dev = [
     "pytest>=8",
     "soundfile>=0.12",   # ใช้ใน tools/convert_sounds.py เท่านั้น
 ]
+build = [
+    "pyinstaller>=6.10",  # tools/build_exe.py → dist/aether/aether.exe
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

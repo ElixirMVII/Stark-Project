@@ -1,4 +1,4 @@
-"""CLI: ``python -m aether [--debug] [--dry-run] [--no-hud] [--config PATH]``"""
+"""CLI: ``python -m aether [--debug] [--dry-run] [--no-hud] [--config PATH] [--calibrate] [--check]``"""
 
 from __future__ import annotations
 
@@ -31,6 +31,21 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="ไฟล์ config (ค่าเริ่มต้น: config.toml ที่ root ของโปรเจกต์)",
     )
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="เปิด calibration wizard ตอนเริ่ม (วัดระยะจีบ + พื้นที่เอื้อม แล้วบันทึก calibration.json)",
+    )
+    parser.add_argument(
+        "--no-calibration",
+        action="store_true",
+        help="ไม่ใช้ค่าที่ calibrate ไว้ (ใช้ค่าใน config.toml อย่างเดียว)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="ตรวจว่า config, โมเดล, ฟอนต์ และเสียงพร้อมใช้ แล้วออก (ไม่ใช้กล้อง)",
+    )
     parser.add_argument("--version", action="version", version=f"AETHER {__version__}")
     return parser
 
@@ -39,16 +54,17 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     # import หลัง parse เพื่อให้ --help / --version ไม่ต้องโหลด Qt
-    from .app import Options, run
+    from .app import Options, run, run_check
 
-    return run(
-        Options(
-            debug=args.debug,
-            dry_run=args.dry_run,
-            no_hud=args.no_hud,
-            config_path=args.config,
-        )
+    options = Options(
+        debug=args.debug,
+        dry_run=args.dry_run,
+        no_hud=args.no_hud,
+        config_path=args.config,
+        calibrate=args.calibrate,
+        no_calibration=args.no_calibration,
     )
+    return run_check(options) if args.check else run(options)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def test_shipped_config_matches_builtin_defaults():
     """config.toml ที่แจกไปต้องตรงกับค่าเริ่มต้นใน dataclass (แก้ที่หนึ่งต้องแก้อีกที่)"""
-    assert load_config(REPO_ROOT / "config.toml") == Config()
+    assert load_config(REPO_ROOT / "config.toml", use_calibration=False) == Config()
 
 
 def test_empty_config_uses_defaults():

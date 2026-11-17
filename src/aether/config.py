@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import os
 import re
 import sys
 import tomllib
@@ -31,14 +33,21 @@ __all__ = [
     "ScrollConfig",
     "TrackingConfig",
     "app_root",
+    "apply_calibration",
     "assets_dir",
+    "bundle_root",
+    "calibration_path",
     "default_config_path",
     "load_config",
+    "log_dir",
     "model_path",
     "parse_config",
+    "read_calibration",
 ]
 
 GESTURE_MODEL_FILENAME = "gesture_recognizer.task"
+CALIBRATION_FILENAME = "calibration.json"
+CALIBRATION_VERSION = 1
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 
@@ -310,13 +319,19 @@ def parse_config(data: dict) -> Config:
     return typing.cast(Config, _build(Config, data, ""))
 
 
-# --------------------------------------------------------------------------- #
 # Paths
 # --------------------------------------------------------------------------- #
 
 
+def _repo_root() -> Path | None:
+    root = Path(__file__).resolve().parents[2]
+    if (root / "assets").is_dir() or (root / "config.toml").is_file():
+        return root
+    return None
+
+
 def app_root() -> Path:
-    """โฟลเดอร์หลักของแอป (ที่มี ``config.toml`` และ ``assets/``)
+    """โฟลเดอร์ของไฟล์ที่ผู้ใช้แก้ได้: ``config.toml``, ``calibration.json``, ``logs/``
 
     - รันจาก source (``pip install -e .``): root ของ repo
     - build ด้วย PyInstaller: โฟลเดอร์ที่มีไฟล์ exe
@@ -324,14 +339,21 @@ def app_root() -> Path:
     """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
-    repo_root = Path(__file__).resolve().parents[2]
-    if (repo_root / "assets").is_dir() or (repo_root / "config.toml").is_file():
-        return repo_root
-    return Path.cwd()
+    return _repo_root() or Path.cwd()
+
+
+def bundle_root() -> Path:
+    """โฟลเดอร์ของไฟล์ที่แจกไปกับแอป (อ่านอย่างเดียว): ``assets/`` และ ``config.toml`` ต้นฉบับ
+
+    ใน build ของ PyInstaller คือโฟลเดอร์ข้อมูลของ bundle (``sys._MEIPASS`` — ปกติคือ ``_internal``)
+    """
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return _repo_root() or Path.cwd()
 
 
 def assets_dir() -> Path:
-    return app_root() / "assets"
+    return bundle_root() / "assets"
 
 
 def model_path() -> Path:
@@ -339,28 +361,123 @@ def model_path() -> Path:
 
 
 def default_config_path() -> Path:
-    return app_root() / "config.toml"
+    """``config.toml`` ข้างตัวแอป ถ้าไม่มี ใช้ต้นฉบับที่แจกไปกับ bundle"""
+    path = app_root() / "config.toml"
+    if not path.is_file() and (bundle_root() / "config.toml").is_file():
+        return bundle_root() / "config.toml"
+    return path
 
 
-def load_config(path: Path | None = None) -> Config:
-    """โหลด config
+def calibration_path() -> Path:
+    return app_root() / CALIBRATION_FILENAME
 
-    ``path=None`` ใช้ ``config.toml`` ที่ root ของแอป ถ้าไม่มีไฟล์ใช้ค่าเริ่มต้นทั้งหมด
+
+def log_dir() -> Path:
+    """โฟลเดอร์เก็บ log: ``logs/`` ข้างตัวแอป ถ้าเขียนไม่ได้ (เช่นติดตั้งใน Program Files) ใช้โฟลเดอร์ของผู้ใช้"""
+    primary = app_root() / "logs"
+    try:
+        primary.mkdir(parents=True, exist_ok=True)
+        if os.access(primary, os.W_OK):
+            return primary
+    except OSError:
+        pass
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "AETHER"
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "aether"
+    fallback = base / "logs"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+# --------------------------------------------------------------------------- #
+# Calibration (ค่าที่วัดจากผู้ใช้ — เขียนโดย calibration wizard)
+# --------------------------------------------------------------------------- #
+
+
+def read_calibration(path: Path) -> dict | None:
+    """อ่าน ``calibration.json`` คืน ``None`` ถ้าไม่มีไฟล์ (raise :class:`ConfigError` ถ้าไฟล์เสีย)"""
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"{path}: อ่านไม่ได้ — {exc} (ลบไฟล์นี้แล้ว calibrate ใหม่ได้)") from exc
+    if not isinstance(data, dict) or data.get("version") != CALIBRATION_VERSION:
+        raise ConfigError(f"{path}: ไม่ใช่ไฟล์ calibration เวอร์ชัน {CALIBRATION_VERSION}")
+    return data
+
+
+def apply_calibration(config: Config, calibration: dict) -> Config:
+    """แทนค่า ``pinch.on/off`` และ ``pointer.active_region`` ด้วยค่าที่วัดจากผู้ใช้
+
+    ค่าอื่นของ config คงเดิม ค่าที่วัดมาถูกตรวจด้วยกติกาเดียวกับ config.toml
+    """
+    try:
+        pinch = calibration.get("pinch")
+        if pinch is not None:
+            config = dataclasses.replace(
+                config,
+                pinch=dataclasses.replace(
+                    config.pinch,
+                    on=_coerce(float, pinch["on"], "calibration.pinch.on"),
+                    off=_coerce(float, pinch["off"], "calibration.pinch.off"),
+                ),
+            )
+        pointer = calibration.get("pointer")
+        if pointer is not None:
+            region = _coerce(
+                tuple[float, float, float, float],
+                pointer["active_region"],
+                "calibration.pointer.active_region",
+            )
+            config = dataclasses.replace(
+                config, pointer=dataclasses.replace(config.pointer, active_region=region)
+            )
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConfigError(f"calibration: รูปแบบไม่ถูกต้อง ({exc!r})") from exc
+    return config
+
+
+def load_config(
+    path: Path | None = None,
+    *,
+    use_calibration: bool = True,
+    calibration: Path | None = None,
+) -> Config:
+    """โหลด config แล้วทับด้วยค่าจาก ``calibration.json`` (ถ้ามี)
+
+    ``path=None`` ใช้ ``config.toml`` ข้างตัวแอป ถ้าไม่มีไฟล์ใช้ค่าเริ่มต้นทั้งหมด
     ถ้าระบุ ``path`` เองแล้วไม่มีไฟล์นั้น ถือเป็น error
+
+    ``use_calibration=False`` ไม่ใช้ค่าที่ calibrate ไว้ ``calibration`` ระบุไฟล์ calibration เอง
+    (ค่าเริ่มต้น: ``calibration.json`` ข้างตัวแอป)
     """
     if path is None:
         path = default_config_path()
-        if not path.is_file():
-            return Config()
+        config = _load_toml(path) if path.is_file() else Config()
     elif not path.is_file():
         raise ConfigError(f"ไม่พบไฟล์ config: {path}")
+    else:
+        config = _load_toml(path)
 
+    if use_calibration:
+        calibration_file = calibration or calibration_path()
+        data = read_calibration(calibration_file)
+        if data is not None:
+            try:
+                config = apply_calibration(config, data)
+            except ConfigError as exc:
+                raise ConfigError(f"{calibration_file}: {exc}") from exc
+    return config
+
+
+def _load_toml(path: Path) -> Config:
     try:
         with path.open("rb") as fh:
             data = tomllib.load(fh)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: ไวยากรณ์ TOML ผิด — {exc}") from exc
-
     try:
         return parse_config(data)
     except ConfigError as exc:
