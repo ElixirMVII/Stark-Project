@@ -12,11 +12,14 @@
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Protocol
 
-from .gestures import EventKind, GestureEvent
+from .config import LauncherItem
+from .gestures import ACTION_LAUNCH_PREFIX, EventKind, GestureEvent
 from .hotkeys import Hotkey, parse_action
 
 __all__ = [
@@ -28,6 +31,7 @@ __all__ = [
     "create_backend",
     "double_click_time_ms",
     "foreground_window",
+    "launch_target",
     "minimize_foreground_window",
     "should_minimize",
 ]
@@ -66,6 +70,10 @@ class InputBackend(Protocol):
         """ย่อหน้าต่างที่ active คืน ``False`` ถ้าไม่ได้ย่อ (เป็น desktop/taskbar หรือไม่มีหน้าต่าง)"""
         ...
 
+    def launch(self, target: str, args: str) -> None:
+        """เปิดโปรแกรม / ไฟล์ / โฟลเดอร์ / URL (รายการใน [launcher])"""
+        ...
+
 
 class DryRunBackend:
     """ไม่ส่ง input จริง แค่ log ว่าจะทำอะไร (``--dry-run``)"""
@@ -91,6 +99,22 @@ class DryRunBackend:
     def minimize_foreground(self) -> bool:
         log.info("[dry-run] minimize foreground window")
         return False
+
+    def launch(self, target: str, args: str) -> None:
+        log.info("[dry-run] launch %s %s", target, args)
+
+
+def launch_target(target: str, args: str = "") -> None:
+    """เปิดสิ่งที่ระบุด้วยโปรแกรมเริ่มต้นของ OS (เหมือนพิมพ์ในกล่อง Run ของ Windows)
+
+    Windows: ``os.startfile`` (ShellExecute — ใช้ได้ทั้ง notepad.exe, โฟลเดอร์, ไฟล์, URL)
+    ระบบอื่น: ``xdg-open`` / ``open`` (args ใช้ได้เฉพาะ Windows)
+    """
+    if sys.platform == "win32":
+        os.startfile(target, arguments=args) if args else os.startfile(target)
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, target], start_new_session=True)
 
 
 def should_minimize(window_class: str) -> bool:
@@ -185,6 +209,9 @@ class PynputBackend:
     def minimize_foreground(self) -> bool:
         return minimize_foreground_window()
 
+    def launch(self, target: str, args: str) -> None:
+        launch_target(target, args)
+
     def _key(self, name: str):
         """ชื่อปุ่ม → key ของ pynput
 
@@ -239,8 +266,14 @@ class ActionExecutor:
     ยกเว้นการปล่อยปุ่ม ซึ่งจะถูกลองทุกครั้งและถือว่าปุ่มไม่ค้างแล้วเสมอ
     """
 
-    def __init__(self, backend: InputBackend, actions: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        backend: InputBackend,
+        actions: Mapping[str, str] | None = None,
+        launcher: Sequence[LauncherItem] = (),
+    ) -> None:
         self._backend = backend
+        self._launcher = tuple(launcher)
         self._pressed: set[str] = set()
         self._keys_down: list[str] = []
         self._actions: dict[str, Hotkey | str] = {
@@ -299,6 +332,13 @@ class ActionExecutor:
         # ARMED: แจ้งสถานะเท่านั้น
 
     def _run_action(self, name: str) -> None:
+        if name.startswith(ACTION_LAUNCH_PREFIX):
+            index = name.removeprefix(ACTION_LAUNCH_PREFIX)
+            if index.isdigit() and int(index) < len(self._launcher):
+                item = self._launcher[int(index)]
+                log.info("launch %s → %s %s", item.label, item.run, item.args)
+                self._backend.launch(item.run, item.args)
+            return
         action = self._actions.get(name)
         if action is None or action == "none":
             log.debug("no action bound to %s", name)

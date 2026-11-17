@@ -114,7 +114,9 @@ class AetherApp(QObject):
             backend, self._dry_run = create_backend(options.dry_run)
         else:
             self._dry_run = options.dry_run
-        self._executor = ActionExecutor(backend, dataclasses.asdict(config.actions))
+        self._executor = ActionExecutor(
+            backend, dataclasses.asdict(config.actions), config.launcher.items
+        )
         if screen is None:
             screen = (
                 Desktop(list_monitors())

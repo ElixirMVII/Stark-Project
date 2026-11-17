@@ -28,6 +28,8 @@ __all__ = [
     "GesturesConfig",
     "HotkeysConfig",
     "HudConfig",
+    "LauncherConfig",
+    "LauncherItem",
     "OneEuroConfig",
     "Palette",
     "PinchConfig",
@@ -272,6 +274,41 @@ class HudConfig:
         return Palette(self.primary, self.accent, default.danger, default.disarmed)
 
 
+LAUNCHER_MAX_ITEMS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class LauncherItem:
+    label: str  # ข้อความบนเมนู (สั้นๆ)
+    run: str  # สิ่งที่จะเปิด: โปรแกรม (notepad.exe), ไฟล์/โฟลเดอร์, หรือ URL
+    args: str = ""  # argument ของโปรแกรม (ไม่บังคับ)
+
+    def __post_init__(self) -> None:
+        _require(bool(self.label.strip()), "launcher.items: label ต้องไม่ว่าง")
+        _require(bool(self.run.strip()), f"launcher.items ({self.label}): run ต้องไม่ว่าง")
+
+
+@dataclass(frozen=True, slots=True)
+class LauncherConfig:
+    enabled: bool = True
+    hold_ms: int = 600  # ค้าง 👍 นานเท่านี้จึงเปิดเมนู
+    timeout_ms: int = 5000  # เปิดเมนูค้างไว้โดยไม่เลือกนานเท่านี้ → ปิดเอง
+    items: tuple[LauncherItem, ...] = (
+        LauncherItem("Browser", "https://www.google.com"),
+        LauncherItem("Files", "explorer.exe"),
+        LauncherItem("Notepad", "notepad.exe"),
+        LauncherItem("Calc", "calc.exe"),
+    )
+
+    def __post_init__(self) -> None:
+        _require(self.hold_ms > 0, "launcher.hold_ms ต้อง > 0")
+        _require(self.timeout_ms >= 1000, "launcher.timeout_ms ต้อง ≥ 1000")
+        _require(
+            len(self.items) <= LAUNCHER_MAX_ITEMS,
+            f"launcher.items มีได้ไม่เกิน {LAUNCHER_MAX_ITEMS} รายการ (มี {len(self.items)})",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
@@ -283,6 +320,7 @@ class Config:
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     hotkeys: HotkeysConfig = field(default_factory=HotkeysConfig)
     hud: HudConfig = field(default_factory=HudConfig)
+    launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
 
 # --------------------------------------------------------------------------- #
@@ -323,6 +361,12 @@ def _coerce(tp: object, value: object, where: str) -> object:
 
     if typing.get_origin(tp) is tuple:
         item_types = typing.get_args(tp)
+        if len(item_types) == 2 and item_types[1] is Ellipsis:  # tuple[X, ...]: ยาวเท่าไรก็ได้
+            _require(isinstance(value, list), f"{where} ต้องเป็น array (ได้ {value!r})")
+            return tuple(
+                _coerce(item_types[0], item, f"{where}[{i}]")
+                for i, item in enumerate(typing.cast(list, value))
+            )
         _require(
             isinstance(value, list) and len(value) == len(item_types),
             f"{where} ต้องเป็น array ที่มี {len(item_types)} ค่า (ได้ {value!r})",

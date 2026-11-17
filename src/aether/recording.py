@@ -153,6 +153,7 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
         "zoom_out": 0,
         "armed": 0,  # จำนวนครั้งที่ถูก arm / disarm ด้วยท่า 🤟
         "disarmed": 0,
+        "launches": 0,  # เปิดรายการจากเมนูวงกลม
     }
     for event in events:
         if event.kind is EventKind.CLICK:
@@ -173,6 +174,8 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
             summary["zoom_out"] += max(-event.dy, 0)
         elif event.kind is EventKind.ACTION:
             key = "fist_holds" if event.name == "fist_hold" else event.name
+            if event.name.startswith("launch_") and event.name.removeprefix("launch_").isdigit():
+                key = "launches"
             if key in summary:
                 summary[key] += 1
         elif event.kind is EventKind.ARMED:

@@ -10,7 +10,8 @@ Pure logic ล้วน — ไม่แตะ OS ไม่แตะเวลา
                                 │          ▼  │
                                 │        SCROLL (✌️)
                                 ├──► GESTURE (🖐) ──► ปัด 4 ทิศ → ACTION + cooldown
-                                ├──► CHARGING (✊/🤟 ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM
+                                ├──► CHARGING (✊/🤟/👍 ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM / เปิดเมนู
+                                │                                  └──► LAUNCHER ──(จีบ)──► launch_N
                                 └──► TWO_HAND_ZOOM (จีบสองมือพร้อมกัน) ──► ZOOM
 
 กติกาความปลอดภัยที่ engine รับผิดชอบ:
@@ -48,6 +49,7 @@ __all__ = [
     "GestureVoter",
     "State",
     "detect_swipe",
+    "launcher_slice",
 ]
 
 LOST_RELEASE_MS = 300  # มือหายนานเท่านี้ถือว่าหลุด: ปล่อยปุ่มเมาส์ กลับ IDLE
@@ -67,9 +69,20 @@ GESTURE_SCROLL = "Victory"
 GESTURE_PALM = "Open_Palm"
 GESTURE_FIST = "Closed_Fist"
 GESTURE_ARM = "ILoveYou"
+GESTURE_LAUNCH = "Thumb_Up"
 
 CHARGE_FIST = "fist_hold"  # ตรงกับชื่อ action ใน [actions] ของ config
 CHARGE_ARM = "arm"
+CHARGE_LAUNCH = "launcher"
+_CHARGE_GESTURE = {
+    CHARGE_FIST: GESTURE_FIST,
+    CHARGE_ARM: GESTURE_ARM,
+    CHARGE_LAUNCH: GESTURE_LAUNCH,
+}
+
+LAUNCH_DEADZONE = 0.06  # ต้องขยับมือห่างจากจุดเปิดเมนูเกินเท่านี้ (สัดส่วนของความกว้างเฟรม) จึงเลือกช่อง
+ACTION_LAUNCHER_OPEN = "launcher_open"  # แจ้ง HUD เท่านั้น
+ACTION_LAUNCH_PREFIX = "launch_"  # launch_0 … launch_7 = เปิดรายการที่ N ใน [launcher].items
 
 
 class State(enum.Enum):
@@ -82,6 +95,7 @@ class State(enum.Enum):
     GESTURE = "GESTURE"  # แบมือ: เคอร์เซอร์หยุด รอการปัด
     CHARGING = "CHARGING"  # กำมือ / 🤟 ค้างอยู่ รอจนครบเวลา
     TWO_HAND_ZOOM = "TWO_HAND_ZOOM"
+    LAUNCHER = "LAUNCHER"  # เมนูวงกลมเปิดอยู่: เคอร์เซอร์หยุด เลือกช่องด้วยทิศของมือ
 
 
 class EventKind(enum.Enum):
@@ -135,6 +149,7 @@ class EngineSnapshot:
     charge: float = 0.0  # 0→1 ระหว่างค้างท่า ✊ / 🤟
     charge_kind: str | None = None  # "fist_hold" | "arm"
     swipe_ready: bool = False  # อยู่ในโหมด GESTURE และพร้อมรับการปัด
+    launcher_selection: int | None = None  # ช่องที่เลือกอยู่ในเมนู (state = LAUNCHER)
 
 
 class GestureVoter:
@@ -244,6 +259,12 @@ class GestureEngine:
         self._other_last_seen: int | None = None
         self._zoom_ref: float | None = None
         self._zoom_filter = OneEuroFilter2D(one_euro.min_cutoff, one_euro.beta, one_euro.d_cutoff)
+
+        # LAUNCHER (เมนูวงกลม)
+        self._launcher_items = len(config.launcher.items) if config.launcher.enabled else 0
+        self._launcher_origin = (0.0, 0.0)
+        self._launcher_t0 = 0
+        self._launcher_selection: int | None = None
 
     # ---- public --------------------------------------------------------- #
 
@@ -408,6 +429,7 @@ class GestureEngine:
         self._palm_lost_since = None
         self._charge_kind = None
         self._zoom_ref = None
+        self._launcher_selection = None
         if pose_released:
             self._voter.reset()
             self._hold_block = None
@@ -458,9 +480,11 @@ class GestureEngine:
         elif self._state is State.GESTURE:
             self._while_gesture(hand, m, frame, now, events)
         elif self._state is State.CHARGING:
-            self._while_charging(m, now, events)
+            self._while_charging(hand, m, now, events)
         elif self._state is State.TWO_HAND_ZOOM:
             self._while_zoom(other, m, frame, now, events)
+        elif self._state is State.LAUNCHER:
+            self._while_launcher(hand, m, frame, now, events)
         else:
             self._while_pointing(hand, m, now, events)
 
@@ -486,7 +510,7 @@ class GestureEngine:
                 self._swipe_ready = False
                 self._palm_lost_since = None
                 return
-            kind = _charge_kind(m.gesture)
+            kind = self._charge_kind_for(m.gesture)
             if kind is not None and self._hold_block != m.gesture:
                 self._state = State.CHARGING
                 self._charge_kind = kind
@@ -620,8 +644,20 @@ class GestureEngine:
 
     # ---- CHARGING: ค้างท่า ✊ / 🤟 ---------------------------------------- #
 
+    def _charge_kind_for(self, gesture: str) -> str | None:
+        """ท่าที่ต้องค้างเพื่อให้ติด → ชนิดของการนับ (👍 นับเฉพาะเมื่อเปิด launcher และมีรายการ)"""
+        if gesture == GESTURE_FIST:
+            return CHARGE_FIST
+        if gesture == GESTURE_ARM:
+            return CHARGE_ARM
+        if gesture == GESTURE_LAUNCH and self._launcher_items:
+            return CHARGE_LAUNCH
+        return None
+
     def _charge_duration(self, kind: str) -> int:
         cfg = self._cfg.gestures
+        if kind == CHARGE_LAUNCH:
+            return self._cfg.launcher.hold_ms
         return cfg.arm_hold_ms if kind == CHARGE_ARM else cfg.fist_hold_ms
 
     def _block_hold(self, gesture: str, now: int) -> None:
@@ -630,18 +666,21 @@ class GestureEngine:
         self._hold_block_until = now + self._cfg.gestures.cooldown_ms
         self._charge_kind = None
 
-    def _while_charging(self, m: _Metrics, now: int, events: list[GestureEvent]) -> None:
+    def _while_charging(
+        self, hand: Hand, m: _Metrics, now: int, events: list[GestureEvent]
+    ) -> None:
         kind = self._charge_kind
-        gesture = GESTURE_ARM if kind == CHARGE_ARM else GESTURE_FIST
-        if kind is None or m.gesture != gesture:
+        if kind is None or m.gesture != _CHARGE_GESTURE[kind]:
             self._charge_kind = None
             self._resume_pointer(m)
             return
         if now - self._charge_t0 < self._charge_duration(kind):
             return
-        self._block_hold(gesture, now)
+        self._block_hold(_CHARGE_GESTURE[kind], now)
         if kind == CHARGE_ARM:
             events.extend(self.set_armed(False))  # 🤟 ค้างขณะ ARMED = disarm
+        elif kind == CHARGE_LAUNCH:
+            self._open_launcher(hand, now, events)
         else:
             x, y = self._cursor_or_origin()
             events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=CHARGE_FIST))
@@ -658,6 +697,42 @@ class GestureEngine:
         elif now - self._charge_t0 >= self._cfg.gestures.arm_hold_ms:
             self._block_hold(GESTURE_ARM, now)
             events.extend(self.set_armed(True))
+
+    # ---- LAUNCHER: เมนูวงกลมเปิดแอป ---------------------------------------- #
+
+    def _open_launcher(self, hand: Hand, now: int, events: list[GestureEvent]) -> None:
+        self._state = State.LAUNCHER
+        self._launcher_origin = palm_center(hand)
+        self._launcher_t0 = now
+        self._launcher_selection = None
+        x, y = self._cursor_or_origin()
+        events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=ACTION_LAUNCHER_OPEN))
+
+    def _close_launcher(self, m: _Metrics) -> None:
+        self._launcher_selection = None
+        self._resume_pointer(m)
+
+    def _while_launcher(
+        self, hand: Hand, m: _Metrics, frame: HandFrame, now: int, events: list[GestureEvent]
+    ) -> None:
+        if m.gesture == GESTURE_PALM or now - self._launcher_t0 > self._cfg.launcher.timeout_ms:
+            self._close_launcher(m)  # แบมือ = ยกเลิก / ค้างไว้นานเกิน = ปิดเอง
+            return
+        px, py = palm_center(hand)
+        ox, oy = self._launcher_origin
+        dx, dy = (px - ox) * frame.width, (py - oy) * frame.height
+        if math.hypot(dx, dy) >= LAUNCH_DEADZONE * frame.width:
+            self._launcher_selection = launcher_slice(dx, dy, self._launcher_items)
+        else:
+            self._launcher_selection = None
+
+        if self._ready["left"] and m.index < self._cfg.pinch.on:
+            self._ready["left"] = False  # ต้องปล่อยนิ้วก่อน การจีบนี้จึงไม่กลายเป็นคลิกต่อ
+            if self._launcher_selection is not None:
+                x, y = self._cursor_or_origin()
+                name = f"{ACTION_LAUNCH_PREFIX}{self._launcher_selection}"
+                events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=name))
+                self._close_launcher(m)
 
     # ---- TWO_HAND_ZOOM: จีบสองมือ กาง/หุบ ---------------------------------- #
 
@@ -821,6 +896,9 @@ class GestureEngine:
             charge=charge,
             charge_kind=self._charge_kind,
             swipe_ready=self._state is State.GESTURE and self._swipe_ready,
+            launcher_selection=(
+                self._launcher_selection if self._state is State.LAUNCHER else None
+            ),
         )
 
 
@@ -833,13 +911,11 @@ def _beyond(delta: float, deadband: float) -> float:
     return 0.0
 
 
-def _charge_kind(gesture: str) -> str | None:
-    """ท่าที่ต้องค้างเพื่อให้ติด → ชนิดของการนับ"""
-    if gesture == GESTURE_FIST:
-        return CHARGE_FIST
-    if gesture == GESTURE_ARM:
-        return CHARGE_ARM
-    return None
+def launcher_slice(dx: float, dy: float, count: int) -> int:
+    """ช่องของเมนูวงกลมในทิศ (dx, dy) — ช่อง 0 อยู่บนสุด นับตามเข็มนาฬิกา (แกน y ของภาพชี้ลง)"""
+    angle = math.degrees(math.atan2(dx, -dy)) % 360.0
+    width = 360.0 / count
+    return int(((angle + width / 2.0) % 360.0) // width)
 
 
 def _is_resting(history: Sequence[tuple[int, float, float]], now: int) -> bool:

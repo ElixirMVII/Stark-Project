@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QPainter, QPainterPath
 
-from ..gestures import CHARGE_ARM, CHARGE_FIST, EngineSnapshot, State
+from ..gestures import CHARGE_ARM, CHARGE_FIST, CHARGE_LAUNCH, EngineSnapshot, State
 from ..hotkeys import Hotkey, parse_action
 from .theme import Theme, arc_path, draw_label, glow_stroke
 
@@ -186,6 +186,8 @@ class ChargeRing:
     def label(self) -> str:
         if self._kind == CHARGE_ARM:
             return "DISARM" if self._armed else "ARM"
+        if self._kind == CHARGE_LAUNCH:
+            return "APPS"
         return self._fist_label
 
     def set_state(self, center: QPointF | None, snapshot: EngineSnapshot) -> bool:

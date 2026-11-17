@@ -60,3 +60,16 @@ show_telemetry = true
 show_radar = true
 sounds = true
 volume = 0.5
+
+[launcher]
+# ค้าง 👍 (Thumb_Up) เพื่อเปิดเมนูวงกลมรอบเคอร์เซอร์ → ขยับมือไปทางช่องที่ต้องการ → จีบนิ้วเพื่อเปิด
+# แบมือ = ปิดเมนู  ·  run = โปรแกรม / ไฟล์ / โฟลเดอร์ / URL  ·  สูงสุด 8 รายการ (ช่องแรกอยู่บนสุด วนตามเข็ม)
+enabled = true
+hold_ms = 600
+timeout_ms = 5000
+items = [
+  { label = "Browser", run = "https://www.google.com" },
+  { label = "Files",   run = "explorer.exe" },
+  { label = "Notepad", run = "notepad.exe" },
+  { label = "Calc",    run = "calc.exe" },
+]

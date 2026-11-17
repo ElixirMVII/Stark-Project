@@ -55,6 +55,9 @@ class RecordingBackend:
         self._record("minimize")
         return True
 
+    def launch(self, target: str, args: str) -> None:
+        self._record("launch", target, args)
+
 
 DEFAULT_ACTIONS = dataclasses.asdict(Config().actions)
 

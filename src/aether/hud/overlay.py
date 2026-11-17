@@ -21,10 +21,11 @@ from PySide6.QtWidgets import QWidget
 
 from ..camera import FramePacket
 from ..config import Config, assets_dir
-from ..gestures import EventKind, GestureEvent
+from ..gestures import ACTION_LAUNCH_PREFIX, ACTION_LAUNCHER_OPEN, EventKind, GestureEvent
 from ..mapping import ScreenGeometry, physical_to_logical
 from ..sound import SoundPlayer
 from .boot import BootSequence
+from .launcher import LauncherMenu
 from .panels import HandRadar, StatusBadge, TelemetryPanel, TelemetrySampler
 from .radial import ChargeRing, Radial
 from .reticle import Reticle
@@ -101,6 +102,7 @@ class HudOverlay(QWidget):
         actions = dataclasses.asdict(config.actions)
         self._radial = Radial(self._theme, actions)
         self._charge = ChargeRing(self._theme, actions)
+        self._launcher = LauncherMenu(self._theme, [item.label for item in config.launcher.items])
         self._badge = StatusBadge(self._theme, dry_run=dry_run) if panels else None
         self._telemetry = (
             TelemetryPanel(self._theme) if panels and config.hud.show_telemetry else None
@@ -120,6 +122,7 @@ class HudOverlay(QWidget):
             self._elements["radar"] = self._radar
         self._elements["radial"] = self._radial
         self._elements["charge"] = self._charge
+        self._elements["launcher"] = self._launcher
         self._elements["reticle"] = self._reticle
         self._painted: dict[str, QRectF] = {}
 
@@ -184,6 +187,8 @@ class HudOverlay(QWidget):
         self._refresh("radial")
         if self._charge.set_state(position, snapshot):
             self._refresh("charge")
+        self._launcher.set_state(position, snapshot)
+        self._refresh("launcher")
 
         if self._badge is not None and self._badge.set_snapshot(snapshot):
             self._refresh("badge")
@@ -223,6 +228,14 @@ class HudOverlay(QWidget):
                 self._reticle.add_shockwave(
                     self.to_logical(event.x, event.y), shockwaves[kind], now
                 )
+            elif kind is EventKind.ACTION and event.name == ACTION_LAUNCHER_OPEN:
+                self._play("swipe")
+            elif kind is EventKind.ACTION and event.name.startswith(ACTION_LAUNCH_PREFIX):
+                index = event.name.removeprefix(ACTION_LAUNCH_PREFIX)
+                if self._cursor_inside and index.isdigit():
+                    self._launcher.flash(int(index), now)
+                    self._refresh("launcher")
+                self._play("click")
             elif kind is EventKind.ACTION:
                 if event.name.startswith("swipe_"):
                     if self._cursor_inside:
@@ -261,7 +274,12 @@ class HudOverlay(QWidget):
     def _tick(self) -> None:
         now = self._clock()
         # วาดใหม่ขณะยังมีแอนิเมชัน และอีกหนึ่งครั้งหลังจบ (เพื่อลบภาพสุดท้ายออก)
-        animated = (("boot", self._boot), ("radial", self._radial), ("reticle", self._reticle))
+        animated = (
+            ("boot", self._boot),
+            ("radial", self._radial),
+            ("launcher", self._launcher),
+            ("reticle", self._reticle),
+        )
         for key, element in animated:
             was_painted = not self._painted.get(key, QRectF()).isEmpty()
             if element.advance(now) or was_painted:

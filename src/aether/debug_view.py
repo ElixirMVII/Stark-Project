@@ -227,6 +227,9 @@ class DebugView(QWidget):
             state.append(f"{snapshot.charge_kind} {snapshot.charge * 100:3.0f}%")
         if snapshot.state is State.GESTURE:
             state.append("swipe ready" if snapshot.swipe_ready else "hold still")
+        if snapshot.state is State.LAUNCHER:
+            selection = snapshot.launcher_selection
+            state.append("slice —" if selection is None else f"slice {selection}")
         if snapshot.cursor is not None:
             state.append(f"cursor ({snapshot.cursor[0]}, {snapshot.cursor[1]})")
         line3 = " · ".join(state)
