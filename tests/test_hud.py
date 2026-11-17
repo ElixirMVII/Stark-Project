@@ -819,6 +819,10 @@ def test_sound_player_disabled_or_missing_files_is_silent(qapp, tmp_path):
 
 def test_sound_player_loads_existing_wavs(qapp, tmp_path):
     sf = pytest.importorskip("soundfile")
+    try:
+        from PySide6.QtMultimedia import QSoundEffect  # noqa: F401
+    except ImportError as exc:  # เช่น Linux ที่ไม่มี libpulse — SoundPlayer จะเงียบเอง (test อีกตัว)
+        pytest.skip(f"QtMultimedia ใช้ไม่ได้บนเครื่องนี้: {exc}")
     tone = (0.2 * np.sin(np.linspace(0, 440 * 2 * np.pi * 0.05, 2205))).astype(np.float32)
     for name in ("click", "boot"):
         sf.write(tmp_path / f"{name}.wav", tone, 44100, subtype="PCM_16")
