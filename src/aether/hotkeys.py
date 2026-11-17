@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-__all__ = ["Hotkey", "HotkeyManager", "parse_hotkey"]
+__all__ = ["BUILTIN_ACTIONS", "Hotkey", "HotkeyManager", "parse_action", "parse_hotkey"]
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +80,12 @@ class Hotkey:
             flags |= _MOD_FLAGS[name]
         return flags
 
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """ลำดับการกด: modifier (ctrl, alt, shift, win) แล้วตามด้วยปุ่มหลัก"""
+        order = ("ctrl", "alt", "shift", "win")
+        return (*(name for name in order if name in self.modifiers), self.key)
+
     def __str__(self) -> str:
         order = ("ctrl", "alt", "shift", "win")
         parts = [name.capitalize() for name in order if name in self.modifiers]
@@ -93,11 +99,12 @@ class Hotkey:
         return "+".join([*parts, key])
 
 
-def parse_hotkey(spec: str) -> Hotkey:
+def parse_hotkey(spec: str, *, require_modifier: bool = True) -> Hotkey:
     """แปลง ``"<ctrl>+<alt>+g"`` เป็น :class:`Hotkey` (raise ``ValueError`` ถ้ารูปแบบผิด)
 
-    ต้องมี modifier อย่างน้อยหนึ่งตัวและปุ่มหลักหนึ่งปุ่ม ปุ่มหลักเป็นตัวอักษร a–z, ตัวเลข 0–9
-    หรือชื่อปุ่มในวงเล็บแหลม เช่น ``<f9>``, ``<esc>``, ``<space>``
+    ต้องมีปุ่มหลักหนึ่งปุ่ม และ (ถ้า ``require_modifier``) modifier อย่างน้อยหนึ่งตัว ปุ่มหลักเป็น
+    ตัวอักษร a–z, ตัวเลข 0–9 หรือชื่อปุ่ม เช่น ``<f9>``, ``<esc>``, ``<space>``, ``left``
+    วงเล็บแหลมใส่หรือไม่ใส่ก็ได้
     """
     modifiers: set[str] = set()
     key: str | None = None
@@ -122,9 +129,25 @@ def parse_hotkey(spec: str) -> Hotkey:
 
     if key is None:
         raise ValueError(f"hotkey {spec!r} ไม่มีปุ่มหลัก")
-    if not modifiers:
+    if require_modifier and not modifiers:
         raise ValueError(f"hotkey {spec!r} ต้องมี modifier อย่างน้อยหนึ่งตัว (ctrl/alt/shift/win)")
     return Hotkey(frozenset(modifiers), key)
+
+
+# action ใน [actions] ของ config ที่ไม่ใช่การกดปุ่ม
+BUILTIN_ACTIONS = ("minimize_foreground", "none")
+
+
+def parse_action(spec: str) -> Hotkey | str:
+    """แปลงค่าใน ``[actions]`` ของ config: ชื่อ action สำเร็จรูป หรือปุ่มลัดที่จะกดให้
+
+    - ``"minimize_foreground"`` — ย่อหน้าต่างที่ active, ``"none"`` — ไม่ทำอะไร (ปิดท่านั้น)
+    - อย่างอื่นถือเป็นปุ่มลัด เช่น ``"ctrl+win+left"``, ``"win+tab"``, ``"alt+f4"``, ``"f11"``
+    """
+    name = spec.strip().lower()
+    if name in BUILTIN_ACTIONS:
+        return name
+    return parse_hotkey(spec, require_modifier=False)
 
 
 class _HotkeyApi(Protocol):

@@ -15,7 +15,7 @@ import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .hotkeys import parse_hotkey
+from .hotkeys import parse_action, parse_hotkey
 
 __all__ = [
     "ActionsConfig",
@@ -177,7 +177,10 @@ class ActionsConfig:
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
-            _require(bool(getattr(self, f.name).strip()), f"actions.{f.name} ต้องไม่ว่าง")
+            try:
+                parse_action(getattr(self, f.name))
+            except ValueError as exc:
+                raise ConfigError(f"actions.{f.name}: {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)

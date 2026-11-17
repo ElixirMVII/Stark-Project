@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from aether.hotkeys import Hotkey, HotkeyManager, parse_hotkey
+from aether.hotkeys import Hotkey, HotkeyManager, parse_action, parse_hotkey
 
 # ---- parse -------------------------------------------------------------- #
 
@@ -179,3 +179,31 @@ def test_start_twice_and_stop_twice_are_safe():
 def test_manager_rejects_bad_spec_up_front():
     with pytest.raises(ValueError):
         HotkeyManager({"g": lambda: None}, api=FakeApi())
+
+
+# ---- parse_action ([actions] ใน config) ----------------------------------- #
+
+
+def test_parse_action_builtins_and_shortcuts():
+    assert parse_action("minimize_foreground") == "minimize_foreground"
+    assert parse_action(" None ") == "none"
+    combo = parse_action("ctrl+win+left")
+    assert isinstance(combo, Hotkey)
+    assert combo.keys == ("ctrl", "win", "left")
+    assert parse_action("win+tab").keys == ("win", "tab")
+    assert parse_action("Win+D").keys == ("win", "d")
+    assert parse_action("<ctrl>+<shift>+<esc>").keys == ("ctrl", "shift", "esc")
+    assert parse_action("f11").keys == ("f11",)  # ปุ่มเดียวไม่มี modifier ก็ได้ (ต่างจาก hotkey)
+
+
+def test_keys_are_ordered_modifiers_first():
+    assert parse_hotkey("g+<alt>+<ctrl>").keys == ("ctrl", "alt", "g")
+    assert parse_hotkey("<win>+<shift>+<alt>+<ctrl>+x").keys == ("ctrl", "alt", "shift", "win", "x")
+
+
+@pytest.mark.parametrize(
+    "spec", ["", "   ", "ctrl+", "ctrl+nope", "ctrl+a+b", "minimize", "ctrl+alt"]
+)
+def test_parse_action_rejects_invalid(spec):
+    with pytest.raises(ValueError):
+        parse_action(spec)

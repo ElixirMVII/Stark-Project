@@ -12,6 +12,7 @@ Thread ที่เกี่ยวข้อง:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import signal
 import sys
@@ -85,7 +86,7 @@ class AetherApp(QObject):
             backend, self._dry_run = create_backend(options.dry_run)
         else:
             self._dry_run = options.dry_run
-        self._executor = ActionExecutor(backend)
+        self._executor = ActionExecutor(backend, dataclasses.asdict(config.actions))
         screen = screen or primary_screen_geometry()
         self._engine = GestureEngine(config, screen, double_click_ms=double_click_time_ms())
         # event มาจาก worker/hotkey thread → ส่งต่อเป็น Qt signal เพื่อให้ไปถึง UI thread

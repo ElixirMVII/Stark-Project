@@ -65,6 +65,8 @@ def test_active_region_becomes_tuple():
         ({"pinch": {"on": 0.4, "off": 0.3}}, "pinch.on"),  # hysteresis กลับด้าน
         ({"gestures": {"zoom_step": 0}}, "zoom_step"),
         ({"actions": {"swipe_up": "  "}}, "actions.swipe_up"),
+        ({"actions": {"swipe_left": "ctrl+nope"}}, "actions.swipe_left"),
+        ({"actions": {"fist_hold": "minimize"}}, "actions.fist_hold"),
         ({"hotkeys": {"quit": "<ctrl>+<alt>+g"}}, "hotkeys"),  # ซ้ำกับ toggle_arm
         ({"hotkeys": {"quit": "ctrl+alt+G"}}, "hotkeys"),  # ซ้ำกับ toggle_arm (เขียนคนละแบบ)
         ({"hotkeys": {"toggle_arm": "g"}}, "hotkeys.toggle_arm"),  # ไม่มี modifier
