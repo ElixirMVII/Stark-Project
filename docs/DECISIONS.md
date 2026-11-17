@@ -42,10 +42,11 @@ dependency ของเรา และ **ห้ามลง `opencv-python` เ
   แล้วใช้ JavaScript ขอ "signed link" แบบใช้ครั้งเดียว และเว็บตอบ 403 กับ client อัตโนมัติบางตัว
 - **ตัดสินใจ:** ไม่เขียนสคริปต์เลี่ยงขั้นตอนของเว็บ สคริปต์จะตรวจว่ามี zip ใน `assets/_downloads/`
   หรือยัง (ยอมรับชื่อไฟล์ที่เบราว์เซอร์ตั้งให้ เช่นมี ` (1)` ต่อท้าย) ถ้ายังไม่มีจะบอกลิงก์และที่วาง
-- **ยังไม่ได้ยืนยัน:** ตารางเลือกเสียงใน `convert_sounds.py` (`ROLES`) เขียนจากชื่อไฟล์ที่คาดว่าอยู่ใน
-  ชุดเสียง (เช่น `click_002.ogg`, `computerNoise_000.ogg`) โดยยังไม่ได้เปิด zip จริง จึงใส่ pattern
-  สำรองไว้ทุกเสียง พร้อม `--list` (ดูชื่อไฟล์ที่มี) และ `--map ROLE=FILE` (เลือกเอง)
-  ต้องรันกับ zip จริงบนเครื่องผู้ใช้แล้วปรับตารางถ้ามีเสียงที่หาไม่เจอหรือฟังไม่เข้ากัน
+- ตารางเลือกเสียงใน `convert_sounds.py` (`ROLES`) — **ชื่อไฟล์ยืนยันแล้ว** (M4+) จากรายชื่อไฟล์ของชุด
+  Interface Sounds ในโปรเจกต์สาธารณะที่ใช้ชุดเสียงนี้ (CC0): `click_001–005`, `drop_001–004`,
+  `confirmation_001–004`, `close_001–004`, `scroll_001–005`, `minimize_001–009`, `error_001–008` มีอยู่จริง
+  และ `computerNoise_000` อยู่ในชุด Sci-Fi Sounds ไฟล์ที่ตารางเลือกจึงตรงกับของจริงทุกตัว
+  **ยังไม่ได้ฟัง** ว่าเสียงเข้ากันหรือไม่ — เลือกใหม่ได้ด้วย `--list` และ `--map ROLE=FILE`
 
 ### D7 · ส่งโมเดลเข้า MediaPipe เป็น bytes
 `HandTracker` อ่านไฟล์โมเดลด้วย Python แล้วส่งเป็น `model_asset_buffer` แทน `model_asset_path`
@@ -279,3 +280,21 @@ spec ไม่ได้ระบุ — เลือก windowed เพราะ
 ### D34 · `--check`
 เพิ่ม CLI option ที่ไม่มีใน spec: ตรวจ config, โหลดโมเดลแล้วประมวลผลเฟรมว่างหนึ่งเฟรม, ตรวจฟอนต์/เสียง/
 calibration แล้วออก (exit 0 = พร้อม, 2 = ใช้ไม่ได้) ไม่ต้องใช้กล้อง — ใช้ตรวจ build หรือการติดตั้งได้ทันที
+
+## หลัง v1
+
+### D35 · CI บน Windows (GitHub Actions)
+เครื่อง dev เป็น Linux จึงยืนยันส่วนที่ผูกกับ Windows เองไม่ได้ เพิ่ม `.github/workflows/ci.yml`:
+- **test** — pytest บน `windows-latest` และ `ubuntu-latest` (`-ra` แสดงเหตุผลของ test ที่ skip)
+  `tests/test_windows.py` ใช้ Win32 จริง: `RegisterHotKey` (ลงทะเบียน/ชน/ถอน), ปุ่มลัดที่
+  `ActionExecutor` ส่งผ่าน pynput ไปถึง OS เป็น hotkey จริง ทั้งปกติและตอนเปิดแป้นไทย,
+  `SetCursorPos`/`GetCursorPos`, อ่านหน้าต่าง foreground (ไม่ย่อจริง), libmediapipe.dll
+- **build-windows** — build `aether.exe` (windowed) แล้วรันตัวที่ build ได้จริง: `--check` (โหลดโมเดลใน
+  bundle), เปิดแอปแบบ `--dry-run` แล้วกด `Ctrl+Alt+Q` ด้วย input จำลองให้ปิดเอง และตรวจ log ว่าไม่มี
+  `CRITICAL`/`Traceback` — เก็บ `dist/aether` เป็น artifact `aether-windows` (14 วัน)
+- input จำลองต้องมี desktop session ถ้า runner ไม่รับ test ที่พึ่งเรื่องนี้จะ skip (ไม่นับว่าผ่าน)
+  และขั้น smoke run จะขึ้น warning แทน
+- ส่วนที่ CI ยังทดสอบไม่ได้: กล้องจริง, ความแม่นของท่ามือ, การคลิกทะลุ HUD ด้วยเมาส์จริง, เสียง
+- เพิ่ม hook สำหรับการรันอัตโนมัติ: `AETHER_NO_DIALOG=1` ไม่แสดงกล่องข้อความ และ `--check` เขียนผลลง log
+  พร้อมบรรทัด `check result: OK|FAIL` (log ตอนปิดแอปมี `shutdown complete`)
+- repo เป็น public จึงใช้ Actions บน Windows ได้โดยไม่เสียโควตา

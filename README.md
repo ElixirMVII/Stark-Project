@@ -261,6 +261,13 @@ dist\aether\aether.exe --check          # ตรวจ build (ขึ้นกล
   `python tools\build_exe.py --console`
 - build เองด้วย PyInstaller ตรงๆ ก็ได้: `pyinstaller packaging\aether.spec --noconfirm --clean`
 
+### ดาวน์โหลด build จาก GitHub Actions (ไม่ต้อง build เอง)
+
+ทุกครั้งที่ push, GitHub Actions จะรัน test บน Windows และ build `aether.exe` ให้:
+หน้า repo บน GitHub → **Actions** → เลือก run ล่าสุดของ workflow **CI** ที่ผ่าน (✓) →
+หัวข้อ **Artifacts** → ดาวน์โหลด `aether-windows` (เก็บไว้ 14 วัน) แล้วแตก zip จะได้โฟลเดอร์ `aether\`
+build นี้ไม่มีไฟล์เสียง (ชุดเสียงต้องโหลดเองผ่านเบราว์เซอร์) — ถ้าอยากได้เสียงให้ build เอง
+
 ### ใช้ build สำเร็จรูป (`aether.exe`)
 
 1. คัดลอกโฟลเดอร์ `aether\` ไปไว้ที่ไหนก็ได้ที่เขียนไฟล์ได้ (เช่น `Documents\aether\`)
