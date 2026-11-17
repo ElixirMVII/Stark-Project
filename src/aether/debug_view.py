@@ -30,6 +30,7 @@ __all__ = ["DebugView"]
 _BACKGROUND = QColor("#0B0F14")
 _TEXT = QColor("#E6F1F5")
 _DIM = QColor("#7A8B99")
+_SIM_BACKGROUND = QColor("#101820")  # พื้นของเฟรมจำลอง (ไม่มีภาพกล้อง)
 _PANEL = QColor(0, 0, 0, 170)
 _WARN = QColor("#FFB300")
 _DISARMED = QColor("#7A8B99")
@@ -131,7 +132,16 @@ class DebugView(QWidget):
         w, h = width * scale, height * scale
         return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
 
-    def _draw_image(self, painter: QPainter, target: QRectF, frame: np.ndarray) -> None:
+    def _draw_image(self, painter: QPainter, target: QRectF, frame: np.ndarray | None) -> None:
+        if frame is None:  # แหล่งจำลอง (mouse / replay): ไม่มีภาพ วาดพื้นทึบแทน
+            painter.fillRect(target, _SIM_BACKGROUND)
+            painter.setPen(_DIM)
+            painter.drawText(
+                target.adjusted(10, 8, -10, -8),
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+                f"SIMULATED · {self._camera_info or 'no camera image'}",
+            )
+            return
         frame = np.ascontiguousarray(frame)
         height, width = frame.shape[:2]
         image = QImage(frame.data, width, height, frame.strides[0], QImage.Format.Format_BGR888)

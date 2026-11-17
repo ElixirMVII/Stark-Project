@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 import time
@@ -70,9 +71,17 @@ class Pipeline:
 
     # ---- worker thread -------------------------------------------------- #
 
-    def process(self, frame_bgr: np.ndarray, timestamp_ms: int) -> FrameResult:
-        """หนึ่งเฟรม: จับมือ → state machine → ส่ง input ให้ OS"""
-        hands = self._track(frame_bgr, timestamp_ms)
+    def process(self, frame: np.ndarray | HandFrame, timestamp_ms: int) -> FrameResult:
+        """หนึ่งเฟรม: จับมือ → state machine → ส่ง input ให้ OS
+
+        ``frame`` เป็นภาพจากกล้อง (ส่งเข้า tracker) หรือ :class:`HandFrame` สำเร็จรูปจาก
+        แหล่งจำลอง (``--source mouse`` / ``replay:``) ซึ่งข้าม tracker และถูกตั้งเวลาใหม่เป็น
+        ``timestamp_ms`` ให้อยู่บนนาฬิกาเดียวกับ watchdog
+        """
+        if isinstance(frame, HandFrame):
+            hands = dataclasses.replace(frame, timestamp_ms=timestamp_ms)
+        else:
+            hands = self._track(frame, timestamp_ms)
         try:
             with self._lock:
                 _, events = self._engine.update(hands)

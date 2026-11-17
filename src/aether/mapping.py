@@ -28,6 +28,7 @@ __all__ = [
     "normalize_in_region",
     "physical_to_logical",
     "primary_screen_geometry",
+    "screen_to_camera",
 ]
 
 Region = tuple[float, float, float, float]  # x0, y0, x1, y1 (normalized ในเฟรมกล้อง)
@@ -150,6 +151,18 @@ def map_to_screen(nx: float, ny: float, region: Region, screen: ScreenArea) -> t
     """จุดในเฟรมกล้อง (normalized) → physical px บนจอ โดย active region ถูกยืดเต็มจอ"""
     u, v = normalize_in_region(nx, ny, region)
     return (screen.left + u * (screen.width - 1), screen.top + v * (screen.height - 1))
+
+
+def screen_to_camera(x: float, y: float, region: Region, screen: ScreenArea) -> tuple[float, float]:
+    """กลับทางของ :func:`map_to_screen`: จุดบนจอ (physical px) → จุดในเฟรมกล้องที่จะ map มาตรงนั้น
+
+    ใช้กับมือจำลองจากเมาส์ (``--source mouse``) จุดนอกจอถูกตรึงที่ขอบ
+    """
+    x0, y0, x1, y1 = region
+    u = (x - screen.left) / max(screen.width - 1, 1)
+    v = (y - screen.top) / max(screen.height - 1, 1)
+    u, v = min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0)
+    return (x0 + u * (x1 - x0), y0 + v * (y1 - y0))
 
 
 def physical_to_logical(x: float, y: float, dpr: float) -> tuple[float, float]:

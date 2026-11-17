@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from . import __version__
 from .actions import ActionExecutor, InputBackend, create_backend, double_click_time_ms
 from .calibration_wizard import CalibrationWizard
-from .camera import CameraThread, FramePacket, FrameSource, OpenCVCamera
+from .camera import CameraThread, FramePacket, FrameSource
 from .config import (
     Config,
     ConfigError,
@@ -58,6 +58,7 @@ from .pipeline import Pipeline
 from .pose_wizard import PoseWizard
 from .poses import PoseClassifier, PoseFileError, PoseLibrary, load_poses
 from .sound import SOUND_NAMES, SoundPlayer
+from .sources import CAMERA_SOURCE, NullTracker, SourceSpec, create_source
 from .tracker import HandTracker
 from .tray import Tray
 
@@ -83,6 +84,7 @@ class Options:
     calibrate: bool = False
     no_calibration: bool = False  # ไม่ใช้ค่าใน calibration.json
     teach: bool = False  # เปิดหน้าต่างสอนท่ามือตอนเริ่ม
+    source: SourceSpec = CAMERA_SOURCE  # แหล่งเฟรม: camera | mouse | replay:PATH
 
 
 class AetherApp(QObject):
@@ -98,7 +100,7 @@ class AetherApp(QObject):
         self,
         config: Config,
         options: Options,
-        tracker: HandTracker,
+        tracker: HandTracker | NullTracker,
         *,
         source: FrameSource | None = None,
         backend: InputBackend | None = None,
@@ -116,10 +118,12 @@ class AetherApp(QObject):
         self._packet: FramePacket | None = None
         self._quit_on_debug_close = quit_on_debug_close
 
+        # --source mouse: เมาส์จริงเป็นตัวป้อนอยู่แล้ว ห้ามส่ง input ซ้ำ → dry-run เสมอ
+        dry_run = options.dry_run or options.source.kind == "mouse"
         if backend is None:
-            backend, self._dry_run = create_backend(options.dry_run)
+            backend, self._dry_run = create_backend(dry_run)
         else:
-            self._dry_run = options.dry_run
+            self._dry_run = dry_run
         actions = {**dataclasses.asdict(config.actions), **self._poses.actions()}
         self._executor = ActionExecutor(backend, actions, config.launcher.items)
         if screen is None:
@@ -145,7 +149,7 @@ class AetherApp(QObject):
         self.quit_requested.connect(QApplication.quit)
 
         self._thread = CameraThread(
-            source or OpenCVCamera(config.camera), self._pipeline.process, self
+            source or create_source(options.source, config, screen), self._pipeline.process, self
         )
         self._thread.frame_ready.connect(self._on_frame_ready)
         self._thread.camera_opened.connect(self._on_camera_opened)
@@ -409,9 +413,12 @@ Wizard = CalibrationWizard | PoseWizard
 def _default_app_factory(
     config: Config, options: Options, quit_on_debug_close: bool, poses: PoseLibrary
 ) -> AetherApp:
-    tracker = HandTracker(
-        model_path(), num_hands=config.tracking.num_hands, mirrored=config.camera.mirror
-    )
+    if options.source.simulated:  # mouse / replay: เฟรมเป็น HandFrame แล้ว ไม่ต้องโหลด MediaPipe
+        tracker = NullTracker()
+    else:
+        tracker = HandTracker(
+            model_path(), num_hands=config.tracking.num_hands, mirrored=config.camera.mirror
+        )
     return AetherApp(
         config, options, tracker, quit_on_debug_close=quit_on_debug_close, poses=poses
     )
@@ -712,15 +719,19 @@ def run(options: Options) -> int:
         return EXIT_SETUP_ERROR
 
     model = model_path()
-    if not model.is_file():
+    if not options.source.simulated and not model.is_file():
         message = f"ไม่พบโมเดล {model}\nรัน `python tools/download_assets.py` ก่อน"
         log.error("%s", message.replace("\n", " — "))
         _report("AETHER — ไม่พบโมเดล", message, error=True)
         return EXIT_SETUP_ERROR
 
+    if options.source.kind == "mouse" and not options.dry_run:
+        log.info("--source mouse บังคับ dry-run (เมาส์จริงเป็นตัวป้อนอยู่แล้ว)")
+        options = dataclasses.replace(options, dry_run=True)
     log.info(
-        "AETHER %s%s%s — log: %s",
+        "AETHER %s%s%s%s — log: %s",
         __version__,
+        "" if options.source.kind == "camera" else f" [source {options.source}]",
         " [dry-run]" if options.dry_run else "",
         " [debug]" if options.debug else "",
         log_file or "(console only)",

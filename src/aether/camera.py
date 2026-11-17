@@ -24,6 +24,7 @@ from PySide6.QtCore import QThread, Signal
 
 from .config import CameraConfig
 from .pipeline import FrameResult
+from .tracker import HandFrame
 
 __all__ = [
     "CameraError",
@@ -46,14 +47,15 @@ class CameraError(RuntimeError):
 
 
 class FrameSource(Protocol):
-    """แหล่งเฟรม (กล้องจริง หรือของปลอมใน test)"""
+    """แหล่งเฟรม: กล้องจริง, แหล่งจำลองใน :mod:`aether.sources` หรือของปลอมใน test"""
 
     def open(self) -> str:
         """เปิดแหล่งเฟรม คืนคำอธิบายสั้นๆ เช่น ``"640x480 @ 30fps"`` (raise :class:`CameraError`)"""
         ...
 
-    def read(self) -> np.ndarray | None:
-        """เฟรม BGR ถัดไป (block จนกว่าจะได้) หรือ ``None`` ถ้าอ่านไม่ได้"""
+    def read(self) -> np.ndarray | HandFrame | None:
+        """เฟรมถัดไป (block จนกว่าจะได้): ภาพ BGR, :class:`HandFrame` สำเร็จรูป (แหล่งจำลอง —
+        ไม่ต้องผ่าน tracker) หรือ ``None`` ถ้าอ่านไม่ได้"""
         ...
 
     def close(self) -> None: ...
@@ -142,7 +144,7 @@ class FpsMeter:
 class FramePacket:
     """ผลของหนึ่งเฟรมที่ worker ส่งให้ UI"""
 
-    image: np.ndarray  # BGR (flip แล้วถ้าเปิด mirror) — ผู้รับห้ามแก้ไข
+    image: np.ndarray | None  # BGR (flip แล้วถ้าเปิด mirror) — None ถ้ามาจากแหล่งจำลอง · ผู้รับห้ามแก้ไข
     result: FrameResult
     captured_at: float  # time.perf_counter() ตอนได้เฟรมจากกล้อง
     process_ms: float  # เวลาตั้งแต่ได้เฟรมจนส่ง input ให้ OS เสร็จ (latency เฟรม→input)
@@ -165,7 +167,7 @@ class CameraThread(QThread):
     def __init__(
         self,
         source: FrameSource,
-        processor: Callable[[np.ndarray, int], FrameResult],
+        processor: Callable[[np.ndarray | HandFrame, int], FrameResult],
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -241,7 +243,7 @@ class CameraThread(QThread):
 
             self._publish(
                 FramePacket(
-                    image=frame,
+                    image=None if isinstance(frame, HandFrame) else frame,
                     result=result,
                     captured_at=captured_at,
                     process_ms=(done_at - captured_at) * 1000.0,

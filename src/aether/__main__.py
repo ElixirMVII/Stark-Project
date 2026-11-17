@@ -1,4 +1,5 @@
-"""CLI: ``python -m aether [--debug] [--dry-run] [--no-hud] [--config PATH] [--calibrate] [--teach] [--check]``"""
+"""CLI: ``python -m aether [--source camera|mouse|replay:PATH] [--debug] [--dry-run] [--no-hud]
+[--config PATH] [--calibrate] [--teach] [--check]``"""
 
 from __future__ import annotations
 
@@ -25,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="ไม่ส่ง input ให้ OS จริง แค่ log ว่าจะทำอะไร",
     )
     parser.add_argument("--no-hud", action="store_true", help="ไม่แสดง HUD overlay")
+    parser.add_argument(
+        "--source",
+        type=_source,
+        default="camera",
+        metavar="camera|mouse|replay:PATH",
+        help="แหล่งเฟรม: กล้องจริง (ค่าเริ่มต้น), mouse = จำลองมือด้วยเมาส์ (บังคับ dry-run), "
+        "replay:PATH = เล่นไฟล์ JSONL ที่อัดไว้",
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -55,6 +64,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _source(text: str):
+    from .sources import parse_source
+
+    try:
+        return parse_source(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -69,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         calibrate=args.calibrate,
         no_calibration=args.no_calibration,
         teach=args.teach,
+        source=args.source,
     )
     return run_check(options) if args.check else run(options)
 
