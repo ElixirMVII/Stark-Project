@@ -20,6 +20,7 @@ from pathlib import Path
 from .hotkeys import parse_action, parse_hotkey
 
 __all__ = [
+    "THEMES",
     "ActionsConfig",
     "CameraConfig",
     "Config",
@@ -28,6 +29,7 @@ __all__ = [
     "HotkeysConfig",
     "HudConfig",
     "OneEuroConfig",
+    "Palette",
     "PinchConfig",
     "PointerConfig",
     "ScrollConfig",
@@ -50,6 +52,26 @@ CALIBRATION_FILENAME = "calibration.json"
 CALIBRATION_VERSION = 1
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
+class Palette(typing.NamedTuple):
+    """สีของ HUD: หลัก, เน้น (ชาร์จ/จีบ/เตือน), อันตราย (error), สถานะ DISARMED"""
+
+    primary: str
+    accent: str
+    danger: str
+    disarmed: str
+
+
+# ธีมสำเร็จรูป (hud.theme) — "custom" ใช้ hud.primary / hud.accent ที่ผู้ใช้ตั้งเอง
+THEMES: dict[str, Palette] = {
+    "aether": Palette("#00E5FF", "#FFB300", "#FF3D57", "#7A8B99"),  # ฟ้า + อำพัน (ค่าเริ่มต้น)
+    "ember": Palette("#FF7A1A", "#FFE066", "#FF1744", "#8D7B70"),  # ส้ม + เหลือง
+    "verdant": Palette("#3DFF8F", "#00E5FF", "#FF3D57", "#71877A"),  # เขียว + ฟ้า
+    "violet": Palette("#B388FF", "#FF80CC", "#FF3D57", "#857C99"),  # ม่วง + ชมพู
+    "ice": Palette("#E6F7FF", "#7FD8FF", "#FF5252", "#8A949B"),  # ขาวอมฟ้า + ฟ้า
+}
+THEME_NAMES = ("custom", *THEMES)
 
 
 class ConfigError(ValueError):
@@ -219,6 +241,7 @@ class HotkeysConfig:
 class HudConfig:
     enabled: bool = True
     opacity: float = 0.9
+    theme: str = "custom"  # "custom" = ใช้ primary/accent ข้างล่าง | ชื่อธีมใน THEMES
     primary: str = "#00E5FF"
     accent: str = "#FFB300"
     show_telemetry: bool = True
@@ -235,6 +258,18 @@ class HudConfig:
                 _HEX_COLOR.fullmatch(value) is not None,
                 f'hud.{name} ต้องเป็นสีแบบ "#RRGGBB" (ได้ {value!r})',
             )
+        _require(
+            self.theme in THEME_NAMES,
+            f"hud.theme ต้องเป็นหนึ่งใน {', '.join(THEME_NAMES)} (ได้ {self.theme!r})",
+        )
+
+    @property
+    def palette(self) -> Palette:
+        """สีที่ใช้จริง: จากธีมสำเร็จรูป หรือ primary/accent ที่ตั้งเอง (theme = "custom")"""
+        if self.theme in THEMES:
+            return THEMES[self.theme]
+        default = THEMES["aether"]
+        return Palette(self.primary, self.accent, default.danger, default.disarmed)
 
 
 @dataclass(frozen=True, slots=True)

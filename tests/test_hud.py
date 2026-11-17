@@ -836,3 +836,13 @@ def test_sound_names_match_convert_tool():
     from conftest import load_tool
 
     assert load_tool("convert_sounds").ROLE_NAMES == SOUND_NAMES
+
+
+def test_theme_presets_reach_the_painter(qapp):
+    from aether.config import THEMES
+
+    theme = Theme.from_config(parse_config({"hud": {"theme": "ember"}}).hud, None)
+    assert theme.primary == QColor(THEMES["ember"].primary)
+    assert theme.accent == QColor(THEMES["ember"].accent)
+    assert theme.danger == QColor(THEMES["ember"].danger)
+    assert theme.disarmed == QColor(THEMES["ember"].disarmed)

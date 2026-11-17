@@ -110,3 +110,38 @@ def test_load_config_reads_file(tmp_path):
     config = load_config(path)
     assert config.camera.index == 2
     assert config.camera.mirror is False
+
+
+# ---- ธีมสี --------------------------------------------------------------- #
+
+
+def test_default_theme_is_custom_with_classic_colors():
+    from aether.config import THEMES
+
+    hud = Config().hud
+    assert hud.theme == "custom"
+    assert hud.palette == THEMES["aether"]  # ค่าเริ่มต้นของ primary/accent = ธีม aether
+
+
+def test_custom_theme_uses_user_colors():
+    hud = parse_config({"hud": {"primary": "#112233", "accent": "#445566"}}).hud
+    assert (hud.palette.primary, hud.palette.accent) == ("#112233", "#445566")
+    assert hud.palette.danger and hud.palette.disarmed
+
+
+@pytest.mark.parametrize("name", ["aether", "ember", "verdant", "violet", "ice"])
+def test_preset_themes_override_primary_and_accent(name):
+    import re
+
+    from aether.config import THEMES
+
+    hud = parse_config({"hud": {"theme": name, "primary": "#000000"}}).hud
+    assert hud.palette == THEMES[name]
+    for color in hud.palette:
+        assert re.fullmatch(r"#[0-9A-F]{6}", color)
+    assert len(set(hud.palette)) == 4  # สีทั้งสี่ต่างกัน
+
+
+def test_unknown_theme_is_rejected():
+    with pytest.raises(ConfigError, match="hud.theme"):
+        parse_config({"hud": {"theme": "rainbow"}})

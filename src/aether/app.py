@@ -512,7 +512,7 @@ class AppController(QObject):
         app.frame_packet.connect(self._on_frame_packet)
         self._app = app
         if self._tray is not None:
-            self._tray.set_primary(config.hud.primary)
+            self._tray.set_primary(config.hud.palette.primary)
             self._tray.set_armed(False)
             self._tray.set_debug_checked(self._debug_wanted)
         app.start(boot=boot)

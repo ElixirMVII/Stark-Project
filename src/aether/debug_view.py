@@ -59,8 +59,8 @@ class DebugView(QWidget):
         self._camera_info = ""
         self._message: str | None = "กำลังเปิดกล้อง…"
         self._connections = hand_connections()
-        self._primary = QColor(config.hud.primary)
-        self._accent = QColor(config.hud.accent)
+        self._primary = QColor(config.hud.palette.primary)
+        self._accent = QColor(config.hud.palette.accent)
 
         self._mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         self._mono.setPointSize(10)

@@ -53,6 +53,7 @@ quit       = "<ctrl>+<alt>+q"
 [hud]
 enabled = true
 opacity = 0.9
+theme = "custom"            # "custom" (ใช้ primary/accent ข้างล่าง) | "aether" | "ember" | "verdant" | "violet" | "ice"
 primary = "#00E5FF"
 accent  = "#FFB300"
 show_telemetry = true

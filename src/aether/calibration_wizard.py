@@ -104,7 +104,7 @@ class CalibrationWizard(QWidget):
         self._title.setFont(title_font)
         self._instruction = QLabel()
         self._instruction.setWordWrap(True)
-        self._preview = _HandPreview(QColor(config.hud.primary))
+        self._preview = _HandPreview(QColor(config.hud.palette.primary))
         self._status = QLabel()
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)

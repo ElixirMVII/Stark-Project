@@ -82,11 +82,12 @@ class Theme:
         mono = _load_family(fonts_dir / MONO_FONT_FILE) if fonts_dir else None
         fixed = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
         general = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
+        palette = hud.palette
         return cls(
-            primary=QColor(hud.primary),
-            accent=QColor(hud.accent),
-            danger=QColor(DANGER),
-            disarmed=QColor(DISARMED),
+            primary=QColor(palette.primary),
+            accent=QColor(palette.accent),
+            danger=QColor(palette.danger),
+            disarmed=QColor(palette.disarmed),
             opacity=hud.opacity,
             display_family=display or general,
             mono_family=mono or fixed,

@@ -211,8 +211,21 @@ overlay โปร่งใสเต็มจอหลัก อยู่บน�
 
 - ตอน `DISARMED` ทั้ง HUD เป็นสีเทา และ reticle แสดงตำแหน่งที่เคอร์เซอร์ *จะ* ไปอยู่ (ยังไม่ขยับเมาส์จริง)
 - ไม่เห็นมือข้างถนัด → reticle จางหายไป
-- ปรับได้ใน `[hud]`: `opacity`, สี `primary`/`accent`, ปิดแผง (`show_telemetry`, `show_radar`),
+- ปรับได้ใน `[hud]`: `opacity`, ธีมสี (`theme`), ปิดแผง (`show_telemetry`, `show_radar`),
   ปิดเสียง (`sounds`), ความดัง (`volume`), หรือปิดทั้งหมด (`enabled = false`)
+
+ธีมสี (`hud.theme`):
+
+| ธีม | สีหลัก / สีเน้น |
+|---|---|
+| `aether` | ฟ้า / อำพัน (เหมือนค่าเริ่มต้น) |
+| `ember` | ส้ม / เหลือง |
+| `verdant` | เขียว / ฟ้า |
+| `violet` | ม่วง / ชมพู |
+| `ice` | ขาวอมฟ้า / ฟ้า |
+| `custom` (ค่าเริ่มต้น) | ตั้งเองด้วย `hud.primary` และ `hud.accent` (`"#RRGGBB"`) |
+
+เปลี่ยนแล้ว tray → **โหลด config ใหม่** ได้เลย ธีมมีผลกับ HUD, หน้าต่าง debug, calibration และไอคอน tray
 
 เสียง: boot, คลิก, ปล่อย (จบการลาก), ปัด, ย่อหน้าต่าง, arm, disarm, error (กล้องหลุด) — ต้องมีไฟล์ใน `assets\sounds\`
 (ดูหัวข้อ [เสียงเอฟเฟกต์](#เสียงเอฟเฟกต์-ไม่บังคับ--ไม่มีไฟล์เสียง-แอปก็ใช้งานได้-แค่เงียบ))
@@ -258,7 +271,8 @@ key ที่พิมพ์ผิดหรือค่าที่อยู่�
 | `gestures.zoom_step` | ระยะสองมือต้องเปลี่ยนกี่ % ต่อการซูม 1 ขั้น (0.06 = 6%) | ซูมเร็ว/ช้าไป |
 | `actions.*` | ท่าแต่ละท่าทำอะไร: ปุ่มลัด, `"minimize_foreground"` หรือ `"none"` | |
 | `hotkeys.toggle_arm` / `quit` | ปุ่มลัด เช่น `"<ctrl>+<alt>+g"`, `"<ctrl>+<shift>+<f9>"` | ชนกับโปรแกรมอื่น |
-| `hud.enabled` / `opacity` / `primary` / `accent` | เปิด HUD, ความโปร่งรวม, สีหลัก, สีเน้น (`"#RRGGBB"`) | |
+| `hud.enabled` / `opacity` | เปิด HUD, ความโปร่งรวม | |
+| `hud.theme` / `primary` / `accent` | ธีมสี หรือ `"custom"` + สีหลัก/สีเน้นที่ตั้งเอง (`"#RRGGBB"`) | |
 | `hud.show_telemetry` / `show_radar` | เปิด/ปิดแผง telemetry และ radar มือ | บังจอ / อยากลด CPU |
 | `hud.sounds` / `volume` | เปิดเสียง และความดัง 0–1 | |
 
