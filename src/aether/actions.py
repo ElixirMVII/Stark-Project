@@ -27,6 +27,7 @@ __all__ = [
     "PynputBackend",
     "create_backend",
     "double_click_time_ms",
+    "foreground_window",
     "minimize_foreground_window",
     "should_minimize",
 ]
@@ -97,11 +98,7 @@ def should_minimize(window_class: str) -> bool:
     return bool(window_class) and window_class not in PROTECTED_WINDOW_CLASSES
 
 
-def minimize_foreground_window() -> bool:
-    """``ShowWindow(GetForegroundWindow(), SW_MINIMIZE)`` — เฉพาะ Windows คืนว่าได้ย่อหรือไม่"""
-    if sys.platform != "win32":
-        log.info("minimize_foreground is only supported on Windows")
-        return False
+def _user32():
     import ctypes
     from ctypes import wintypes
 
@@ -112,16 +109,37 @@ def minimize_foreground_window() -> bool:
     user32.GetClassNameW.restype = ctypes.c_int
     user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
     user32.ShowWindow.restype = wintypes.BOOL
+    return user32
 
+
+def foreground_window() -> tuple[int, str] | None:
+    """(handle, ชื่อ class) ของหน้าต่างที่ active อยู่ — ``None`` ถ้าไม่มี หรือไม่ใช่ Windows"""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    user32 = _user32()
     window = user32.GetForegroundWindow()
     if not window:
-        return False
+        return None
     buffer = ctypes.create_unicode_buffer(256)
     user32.GetClassNameW(window, buffer, len(buffer))
-    if not should_minimize(buffer.value):
-        log.debug("not minimizing shell window %r", buffer.value)
+    return int(window), buffer.value
+
+
+def minimize_foreground_window() -> bool:
+    """``ShowWindow(GetForegroundWindow(), SW_MINIMIZE)`` — เฉพาะ Windows คืนว่าได้ย่อหรือไม่"""
+    if sys.platform != "win32":
+        log.info("minimize_foreground is only supported on Windows")
         return False
-    user32.ShowWindow(window, _SW_MINIMIZE)
+    target = foreground_window()
+    if target is None:
+        return False
+    window, window_class = target
+    if not should_minimize(window_class):
+        log.debug("not minimizing shell window %r", window_class)
+        return False
+    _user32().ShowWindow(window, _SW_MINIMIZE)
     return True
 
 

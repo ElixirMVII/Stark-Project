@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sys
 
 import pytest
 
@@ -12,6 +13,7 @@ from aether.actions import (
     DryRunBackend,
     create_backend,
     double_click_time_ms,
+    foreground_window,
     minimize_foreground_window,
     should_minimize,
 )
@@ -313,5 +315,7 @@ def test_desktop_and_taskbar_are_never_minimized():
     assert not should_minimize("")  # อ่าน class ไม่ได้ → ไม่ย่อ
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="นอก Windows เท่านั้น")
 def test_minimize_is_a_no_op_outside_windows():
     assert minimize_foreground_window() is False
+    assert foreground_window() is None

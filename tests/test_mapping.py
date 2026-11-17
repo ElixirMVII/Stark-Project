@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import sys
 
 import pytest
 
@@ -89,9 +90,19 @@ def test_scale_125_and_150_examples():
     assert physical_to_logical(960, 540, 1.5) == pytest.approx((640, 360))
 
 
-def test_primary_screen_geometry_from_qt(qapp):
-    """บนเครื่อง test (ไม่ใช่ Windows) ใช้ค่าจาก Qt: logical size × devicePixelRatio"""
+def test_primary_screen_geometry(qapp):
+    """Windows: ค่าจาก GetSystemMetrics (physical px) / อื่นๆ: logical size ของ Qt × devicePixelRatio"""
     geometry = primary_screen_geometry()
+    assert (geometry.left, geometry.top) == (0, 0)
+    if sys.platform == "win32":
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        assert (geometry.width, geometry.height) == (
+            user32.GetSystemMetrics(0),
+            user32.GetSystemMetrics(1),
+        )
+        return
     screen = qapp.primaryScreen()
     dpr = screen.devicePixelRatio()
     assert geometry.width == round(screen.size().width() * dpr)

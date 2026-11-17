@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import signal
 import sys
 from collections.abc import Callable
@@ -524,13 +525,19 @@ def _report(title: str, text: str, *, error: bool) -> None:
     if stream is not None:
         print(text, file=stream)
         return
+    if os.environ.get("AETHER_NO_DIALOG"):  # รันอัตโนมัติ (CI): ห้ามมีกล่องข้อความมาค้าง
+        return
     _ = QApplication.instance() or QApplication(sys.argv[:1])  # QMessageBox ต้องมี QApplication
     box = QMessageBox.critical if error else QMessageBox.information
     box(None, title, text)
 
 
 def run_check(options: Options) -> int:
-    """``--check``: ตรวจว่า asset ครบและโมเดลโหลดได้ (ไม่ต้องใช้กล้อง) — ใช้ตรวจ build"""
+    """``--check``: ตรวจว่า asset ครบและโมเดลโหลดได้ (ไม่ต้องใช้กล้อง) — ใช้ตรวจ build
+
+    ผลลัพธ์แสดงบน console (หรือกล่องข้อความถ้าไม่มี console) และเขียนลง log ด้วย
+    """
+    configure_logging(False, log_dir())
     lines = [f"AETHER {__version__}"]
     ok = True
     try:
@@ -580,6 +587,9 @@ def run_check(options: Options) -> int:
     else:
         lines.append("· ยังไม่ได้ calibrate (ใช้ค่าใน config.toml)")
     lines.append("ผลรวม: พร้อมใช้งาน" if ok else "ผลรวม: ยังใช้งานไม่ได้")
+    for line in lines:
+        log.info("check: %s", line)
+    log.info("check result: %s", "OK" if ok else "FAIL")
     _report("AETHER — check", "\n".join(lines), error=not ok)
     return EXIT_OK if ok else EXIT_SETUP_ERROR
 
@@ -632,4 +642,4 @@ def run(options: Options) -> int:
     finally:
         keepalive.stop()
         controller.shutdown()
-        log.info("ปิดแอปแล้ว")
+        log.info("ปิดแอปแล้ว (shutdown complete)")
