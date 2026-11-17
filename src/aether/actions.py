@@ -195,23 +195,37 @@ def _win32_window_api():
     return ctypes, wintypes, user32
 
 
-def win32_grab_window(x: int, y: int, *, allow_own: bool = False) -> int | None:
-    """หน้าต่างหลัก (root) ใต้จุด (x, y) ที่หยิบได้ — ไม่รวม desktop/taskbar และหน้าต่างของ AETHER เอง"""
+def win32_root_window_at(x: int, y: int) -> int | None:
+    """หน้าต่างหลัก (root) ที่อยู่บนสุดตรงจุด (x, y)"""
     if sys.platform != "win32":
         return None
-    ctypes, wintypes, user32 = _win32_window_api()
+    _, wintypes, user32 = _win32_window_api()
     child = user32.WindowFromPoint(wintypes.POINT(x, y))
     window = user32.GetAncestor(child, _GA_ROOT) if child else None
-    if not window:
-        return None
+    return int(window) if window else None
+
+
+def win32_window_info(handle: int) -> tuple[int, str]:
+    """(process id เจ้าของหน้าต่าง, ชื่อ class)"""
+    ctypes, wintypes, user32 = _win32_window_api()
     pid = wintypes.DWORD()
-    user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
-    if pid.value == os.getpid() and not allow_own:
-        return None  # HUD / หน้าต่าง debug ของเราเอง
+    user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
     buffer = ctypes.create_unicode_buffer(256)
-    user32.GetClassNameW(window, buffer, len(buffer))
-    if not should_minimize(buffer.value):  # desktop / taskbar
+    user32.GetClassNameW(handle, buffer, len(buffer))
+    return pid.value, buffer.value
+
+
+def win32_grab_window(x: int, y: int, *, allow_own: bool = False) -> int | None:
+    """หน้าต่างหลัก (root) ใต้จุด (x, y) ที่หยิบได้ — ไม่รวม desktop/taskbar และหน้าต่างของ AETHER เอง"""
+    window = win32_root_window_at(x, y)
+    if window is None:
         return None
+    pid, window_class = win32_window_info(window)
+    if pid == os.getpid() and not allow_own:
+        return None  # HUD / หน้าต่าง debug ของเราเอง
+    if not should_minimize(window_class):  # desktop / taskbar
+        return None
+    _, _, user32 = _win32_window_api()
     if user32.IsZoomed(window):
         user32.ShowWindow(window, _SW_RESTORE)  # ขยายเต็มจออยู่: คืนขนาดปกติก่อนลาก (เหมือนลากด้วยเมาส์)
     return int(window)

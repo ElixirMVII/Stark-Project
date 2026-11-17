@@ -249,7 +249,15 @@ def _native_test_window():
 
 def test_window_under_point_can_be_grabbed_and_moved():
     """หยิบหน้าต่างจริงด้วย WindowFromPoint + ขยับด้วย SetWindowPos"""
-    from aether.actions import win32_grab_window, win32_move_window, win32_window_rect
+    import os
+
+    from aether.actions import (
+        win32_grab_window,
+        win32_move_window,
+        win32_root_window_at,
+        win32_window_info,
+        win32_window_rect,
+    )
 
     user32, hwnd = _native_test_window()
     if not hwnd:
@@ -257,16 +265,23 @@ def test_window_under_point_can_be_grabbed_and_moved():
     try:
         rect = win32_window_rect(hwnd)
         assert rect is not None and rect[2] > rect[0] and rect[3] > rect[1]
-        center = ((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
-        assert win32_grab_window(*center) is None  # หน้าต่างของ process ตัวเองห้ามหยิบ
-        grabbed = win32_grab_window(*center, allow_own=True)
-        if grabbed is None:
-            pytest.skip("มีหน้าต่างอื่นบังจุดกึ่งกลางของหน้าต่างทดสอบ")
-        assert grabbed == hwnd
+        pid, window_class = win32_window_info(hwnd)
+        assert pid == os.getpid()  # หน้าต่างนี้เป็นของ process เราเอง
+        assert window_class.lower() == "static"
+
+        # ขยับได้ตรงระยะ และขนาดไม่เปลี่ยน (ไม่ขึ้นกับว่ามีหน้าต่างอื่นบังหรือไม่)
         assert win32_move_window(hwnd, 37, 21)
         moved = win32_window_rect(hwnd)
         assert (moved[0] - rect[0], moved[1] - rect[1]) == (37, 21)
         assert (moved[2] - moved[0], moved[3] - moved[1]) == (rect[2] - rect[0], rect[3] - rect[1])
+
+        center = ((moved[0] + moved[2]) // 2, (moved[1] + moved[3]) // 2)
+        top = win32_root_window_at(*center)
+        if top != hwnd:
+            cover = win32_window_info(top)[1] if top else "ไม่มี"
+            pytest.skip(f"หน้าต่างอื่น ({cover}) บังหน้าต่างทดสอบอยู่ใน session นี้")
+        assert win32_grab_window(*center) is None  # หน้าต่างของ process ตัวเองห้ามหยิบ
+        assert win32_grab_window(*center, allow_own=True) == hwnd
     finally:
         user32.DestroyWindow(hwnd)
 
