@@ -266,8 +266,19 @@ def test_cursor_is_frozen_while_charging():
     assert driver.engine.state is State.CHARGING
     cursor = driver.engine.snapshot.cursor
     driver.clear()
-    driver.animate(lambda p: make_hand(0.5 + 0.1 * p, 0.4, **FIST), 300)
+    driver.animate(lambda p: make_hand(0.5 + 0.02 * p, 0.4, **FIST), 300)  # ไหวเล็กน้อย
     assert of_kind(driver.events, EventKind.MOVE) == []
+    assert driver.engine.snapshot.cursor == cursor
+    assert driver.engine.state is State.CHARGING
+
+
+def test_moving_fist_does_not_grab_when_window_grab_is_off():
+    driver = pointing({"gestures": {"window_grab": False}})
+    driver.hold(make_hand(**FIST), 200)
+    cursor = driver.engine.snapshot.cursor
+    driver.clear()
+    driver.animate(lambda p: make_hand(0.5 + 0.1 * p, 0.4, **FIST), 300)
+    assert of_kind(driver.events, EventKind.MOVE, EventKind.WINDOW_GRAB) == []
     assert driver.engine.snapshot.cursor == cursor
 
 
@@ -606,7 +617,7 @@ def test_five_minutes_of_normal_use_with_label_flicker_triggers_nothing_special(
     driver.engine.set_armed(True)
     resting = make_hand(0.25, 0.62, pinch=PINCHED, side="left")  # มือซ้ายวางพัก นิ้วชิดกัน
     x, y = 0.5, 0.4
-    special = ("Open_Palm", "Closed_Fist", "ILoveYou")
+    special = ("Open_Palm", "Closed_Fist", "ILoveYou", "Thumb_Up")
 
     def frame(pinch=OPEN, gesture="None"):
         driver.step(make_hand(x, y, pinch=pinch, gesture=gesture), resting)

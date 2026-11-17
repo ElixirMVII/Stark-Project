@@ -38,6 +38,7 @@ cooldown_ms = 800
 fist_hold_ms = 600
 arm_hold_ms = 1000
 zoom_step = 0.06
+window_grab = true          # ✊ แล้วขยับ = หยิบหน้าต่างลาก/โยน (✊ นิ่งๆ = ย่อหน้าต่าง)
 
 [actions]
 swipe_left  = "ctrl+win+left"

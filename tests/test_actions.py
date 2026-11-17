@@ -58,6 +58,18 @@ class RecordingBackend:
     def launch(self, target: str, args: str) -> None:
         self._record("launch", target, args)
 
+    grab_result: int | None = 4242  # handle ที่ grab_window คืน (None = ไม่มีหน้าต่างให้หยิบ)
+
+    def grab_window(self, x: int, y: int) -> int | None:
+        self._record("grab", x, y)
+        return self.grab_result
+
+    def move_window(self, handle: int, dx: int, dy: int) -> None:
+        self._record("move_window", handle, dx, dy)
+
+    def throw_window(self, handle: int, vx: int, vy: int) -> None:
+        self._record("throw", handle, vx, vy)
+
 
 DEFAULT_ACTIONS = dataclasses.asdict(Config().actions)
 

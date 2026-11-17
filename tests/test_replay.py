@@ -195,6 +195,8 @@ def test_summarize_events():
         "armed": 1,
         "disarmed": 1,
         "launches": 1,
+        "window_grabs": 0,
+        "window_throws": 0,
     }
 
 

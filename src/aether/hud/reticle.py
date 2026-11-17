@@ -36,6 +36,7 @@ SHOCKWAVE_START = 12.0
 SHOCKWAVE_END = 74.0
 TRAIL_SECONDS = 0.45
 TRAIL_POINTS = 28
+_DRAG_STATES = (State.DRAGGING, State.WINDOW_DRAG)  # ลากด้วยการจีบ หรือถือหน้าต่างด้วยกำมือ
 
 
 @dataclass(slots=True)
@@ -76,7 +77,7 @@ class Reticle:
         self._visible = position is not None and snapshot.hand_present
         if position is not None:
             self._pos = position
-            if snapshot.state is State.DRAGGING:
+            if snapshot.state in _DRAG_STATES:
                 self._trail.append((QPointF(position), now))
 
     def add_shockwave(self, center: QPointF, color: QColor, now: float) -> None:
@@ -95,7 +96,7 @@ class Reticle:
             self._alpha = max(target, self._alpha - step)
 
         if self._snapshot.armed:
-            dragging = self._snapshot.state is State.DRAGGING
+            dragging = self._snapshot.state in _DRAG_STATES
             speed = SPIN_DRAG_DEG_PER_S if dragging else SPIN_DEG_PER_S
             self._angle = (self._angle + speed * dt) % 360.0
 
@@ -154,7 +155,7 @@ class Reticle:
         theme = self._theme
         snapshot = self._snapshot
         armed = snapshot.armed
-        dragging = snapshot.state is State.DRAGGING
+        dragging = snapshot.state in _DRAG_STATES
         pinched = snapshot.pinch_level >= 1.0
         base = theme.state_color(armed)
         hot = theme.accent if armed else theme.disarmed

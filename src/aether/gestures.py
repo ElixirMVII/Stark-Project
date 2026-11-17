@@ -12,6 +12,7 @@ Pure logic ล้วน — ไม่แตะ OS ไม่แตะเวลา
                                 ├──► GESTURE (🖐) ──► ปัด 4 ทิศ → ACTION + cooldown
                                 ├──► CHARGING (✊/🤟/👍 ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM / เปิดเมนู
                                 │                                  └──► LAUNCHER ──(จีบ)──► launch_N
+                                │   ✊ แล้วขยับก่อนครบเวลา ──► WINDOW_DRAG ──(แบมือ)──► วาง / โยน
                                 └──► TWO_HAND_ZOOM (จีบสองมือพร้อมกัน) ──► ZOOM
 
 กติกาความปลอดภัยที่ engine รับผิดชอบ:
@@ -84,6 +85,10 @@ LAUNCH_DEADZONE = 0.06  # ต้องขยับมือห่างจาก
 ACTION_LAUNCHER_OPEN = "launcher_open"  # แจ้ง HUD เท่านั้น
 ACTION_LAUNCH_PREFIX = "launch_"  # launch_0 … launch_7 = เปิดรายการที่ N ใน [launcher].items
 
+GRAB_START = 0.05  # ✊ ขยับเกินเท่านี้ (สัดส่วนของความกว้างเฟรม) ก่อนครบ fist_hold_ms = หยิบหน้าต่าง
+THROW_SPEED = 1800.0  # ปล่อยมือขณะหน้าต่างเคลื่อนเร็วกว่านี้ (physical px/s) = โยน
+THROW_SAMPLE_MS = 100  # วัดความเร็วตอนปล่อยจากช่วงเวลานี้
+
 
 class State(enum.Enum):
     DISARMED = "DISARMED"
@@ -96,6 +101,7 @@ class State(enum.Enum):
     CHARGING = "CHARGING"  # กำมือ / 🤟 ค้างอยู่ รอจนครบเวลา
     TWO_HAND_ZOOM = "TWO_HAND_ZOOM"
     LAUNCHER = "LAUNCHER"  # เมนูวงกลมเปิดอยู่: เคอร์เซอร์หยุด เลือกช่องด้วยทิศของมือ
+    WINDOW_DRAG = "WINDOW_DRAG"  # ✊ ถือหน้าต่างอยู่: หน้าต่างและเคอร์เซอร์ขยับตามมือ
 
 
 class EventKind(enum.Enum):
@@ -105,6 +111,9 @@ class EventKind(enum.Enum):
     CLICK = "click"
     SCROLL = "scroll"
     ZOOM = "zoom"  # Ctrl + ล้อเมาส์ (dy > 0 = ซูมเข้า)
+    WINDOW_GRAB = "window_grab"  # หยิบหน้าต่างที่ (x, y)
+    WINDOW_MOVE = "window_move"  # ขยับหน้าต่างที่ถืออยู่ (dx, dy) px
+    WINDOW_RELEASE = "window_release"  # วาง — (dx, dy) = ความเร็วตอนโยน px/s (0, 0 = วางเฉยๆ)
     ACTION = "action"  # ท่าครั้งเดียว: name = "swipe_left" | ... | "fist_hold"
     ARMED = "armed"  # แจ้งสถานะเท่านั้น ไม่ใช่ input ของ OS
     DISARMED = "disarmed"
@@ -266,6 +275,10 @@ class GestureEngine:
         self._launcher_t0 = 0
         self._launcher_selection: int | None = None
 
+        # WINDOW_DRAG (✊ หยิบหน้าต่าง)
+        self._charge_anchor = (0.0, 0.0)
+        self._drag_history: deque[tuple[int, float, float]] = deque()
+
     # ---- public --------------------------------------------------------- #
 
     @property
@@ -292,6 +305,8 @@ class GestureEngine:
         else:
             if self._state is State.DRAGGING:
                 events.append(self._button_up("disarm"))
+            elif self._state is State.WINDOW_DRAG:
+                events.append(GestureEvent(EventKind.WINDOW_RELEASE, reason="disarm"))
             self._armed = False
             self._state = State.DISARMED
             events.append(GestureEvent(EventKind.DISARMED))
@@ -407,6 +422,8 @@ class GestureEngine:
             return  # ช่วงผ่อนผัน: มือหายแวบเดียว คงสถานะเดิมไว้ ไม่ขยับ ไม่ปล่อยปุ่ม
         if self._state is State.DRAGGING:
             events.append(self._button_up("hand_lost"))
+        elif self._state is State.WINDOW_DRAG:
+            events.append(GestureEvent(EventKind.WINDOW_RELEASE, reason="hand_lost"))
         self._reset_tracking()
         if self._armed:
             self._state = State.IDLE
@@ -430,6 +447,7 @@ class GestureEngine:
         self._charge_kind = None
         self._zoom_ref = None
         self._launcher_selection = None
+        self._drag_history.clear()
         if pose_released:
             self._voter.reset()
             self._hold_block = None
@@ -480,7 +498,9 @@ class GestureEngine:
         elif self._state is State.GESTURE:
             self._while_gesture(hand, m, frame, now, events)
         elif self._state is State.CHARGING:
-            self._while_charging(hand, m, now, events)
+            self._while_charging(hand, m, frame, now, events)
+        elif self._state is State.WINDOW_DRAG:
+            self._while_window_drag(m, now, events)
         elif self._state is State.TWO_HAND_ZOOM:
             self._while_zoom(other, m, frame, now, events)
         elif self._state is State.LAUNCHER:
@@ -515,6 +535,7 @@ class GestureEngine:
                 self._state = State.CHARGING
                 self._charge_kind = kind
                 self._charge_t0 = now
+                self._charge_anchor = m.anchor
                 return
 
         pinch = self._cfg.pinch
@@ -667,13 +688,19 @@ class GestureEngine:
         self._charge_kind = None
 
     def _while_charging(
-        self, hand: Hand, m: _Metrics, now: int, events: list[GestureEvent]
+        self, hand: Hand, m: _Metrics, frame: HandFrame, now: int, events: list[GestureEvent]
     ) -> None:
         kind = self._charge_kind
         if kind is None or m.gesture != _CHARGE_GESTURE[kind]:
             self._charge_kind = None
             self._resume_pointer(m)
             return
+        if kind == CHARGE_FIST and self._cfg.gestures.window_grab:
+            ox, oy = self._charge_anchor
+            moved = math.hypot((m.anchor[0] - ox) * frame.width, (m.anchor[1] - oy) * frame.height)
+            if moved >= GRAB_START * frame.width:  # ✊ แล้วขยับ = หยิบ ไม่ใช่ค้างเพื่อย่อ
+                self._start_window_drag(m, now, events)
+                return
         if now - self._charge_t0 < self._charge_duration(kind):
             return
         self._block_hold(_CHARGE_GESTURE[kind], now)
@@ -697,6 +724,50 @@ class GestureEngine:
         elif now - self._charge_t0 >= self._cfg.gestures.arm_hold_ms:
             self._block_hold(GESTURE_ARM, now)
             events.extend(self.set_armed(True))
+
+    # ---- WINDOW_DRAG: ✊ หยิบหน้าต่างลาก / โยน ------------------------------ #
+
+    def _start_window_drag(self, m: _Metrics, now: int, events: list[GestureEvent]) -> None:
+        self._block_hold(GESTURE_FIST, now)  # วางแล้วยังกำอยู่ต้องไม่กลายเป็นย่อหน้าต่าง
+        self._state = State.WINDOW_DRAG
+        self._pointer.rebase(m.target)  # เคอร์เซอร์ (= จุดที่จับ) ขยับต่อจากที่เดิม ไม่กระโดด
+        self._drag_history.clear()
+        self._drag_history.append((now, *m.target))
+        x, y = self._cursor_or_origin()
+        events.append(GestureEvent(EventKind.WINDOW_GRAB, x=x, y=y))
+
+    def _while_window_drag(self, m: _Metrics, now: int, events: list[GestureEvent]) -> None:
+        if m.gesture != GESTURE_FIST:  # แบมือ = วาง (เร็วพอ = โยน)
+            vx, vy = self._release_velocity(now)
+            x, y = self._cursor_or_origin()
+            events.append(GestureEvent(EventKind.WINDOW_RELEASE, x=x, y=y, dx=vx, dy=vy))
+            self._drag_history.clear()
+            self._resume_pointer(m)
+            return
+        before = self._cursor_or_origin()
+        self._move(m.target, 1.0, events)  # เคอร์เซอร์ขยับไปพร้อมหน้าต่าง
+        after = self._cursor_or_origin()
+        if after != before:
+            dx, dy = after[0] - before[0], after[1] - before[1]
+            events.append(GestureEvent(EventKind.WINDOW_MOVE, x=after[0], y=after[1], dx=dx, dy=dy))
+        self._drag_history.append((now, *m.target))
+        while len(self._drag_history) > 2 and now - self._drag_history[0][0] > 4 * THROW_SAMPLE_MS:
+            self._drag_history.popleft()
+
+    def _release_velocity(self, now: int) -> tuple[int, int]:
+        """ความเร็วสูงสุดของมือช่วงท้าย (px/s บนจอ) ถ้าไม่ถึงเกณฑ์โยนคืน (0, 0)"""
+        best = (0.0, 0.0)
+        samples = list(self._drag_history)
+        for i, (t1, x1, y1) in enumerate(samples):
+            for t0, x0, y0 in reversed(samples[:i]):
+                if t1 - t0 >= THROW_SAMPLE_MS:
+                    v = ((x1 - x0) * 1000.0 / (t1 - t0), (y1 - y0) * 1000.0 / (t1 - t0))
+                    if math.hypot(*v) > math.hypot(*best):
+                        best = v
+                    break
+        if math.hypot(*best) < THROW_SPEED:
+            return (0, 0)
+        return (round(best[0]), round(best[1]))
 
     # ---- LAUNCHER: เมนูวงกลมเปิดแอป ---------------------------------------- #
 

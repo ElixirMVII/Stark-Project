@@ -31,6 +31,8 @@ __all__ = [
     "create_backend",
     "double_click_time_ms",
     "foreground_window",
+    "glide_offset",
+    "keep_on_screen",
     "launch_target",
     "minimize_foreground_window",
     "should_minimize",
@@ -45,6 +47,12 @@ PROTECTED_WINDOW_CLASSES = frozenset(
     {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
 )
 _SW_MINIMIZE = 6
+_SW_RESTORE = 9
+_GA_ROOT = 2
+_SWP_MOVE_ONLY = 0x0001 | 0x0004 | 0x0010  # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+
+THROW_GLIDE_S = 0.25  # หน้าต่างที่ถูกโยนไหลต่อเท่ากับความเร็วตอนปล่อย × เวลานี้
+THROW_KEEP_VISIBLE = 120  # หลังโยนต้องเหลือส่วนของหน้าต่างบนจออย่างน้อยเท่านี้ (px) ทั้งสองแกน
 
 
 class InputBackend(Protocol):
@@ -72,6 +80,16 @@ class InputBackend(Protocol):
 
     def launch(self, target: str, args: str) -> None:
         """เปิดโปรแกรม / ไฟล์ / โฟลเดอร์ / URL (รายการใน [launcher])"""
+        ...
+
+    def grab_window(self, x: int, y: int) -> int | None:
+        """หยิบหน้าต่างหลักที่อยู่ใต้จุด (x, y) คืน handle หรือ ``None`` ถ้าหยิบไม่ได้"""
+        ...
+
+    def move_window(self, handle: int, dx: int, dy: int) -> None: ...
+
+    def throw_window(self, handle: int, vx: int, vy: int) -> None:
+        """ปล่อยหน้าต่างที่ความเร็ว (vx, vy) px/s — หน้าต่างไหลต่อแต่ยังเหลือบนจอ"""
         ...
 
 
@@ -103,6 +121,16 @@ class DryRunBackend:
     def launch(self, target: str, args: str) -> None:
         log.info("[dry-run] launch %s %s", target, args)
 
+    def grab_window(self, x: int, y: int) -> int | None:
+        log.info("[dry-run] grab window at (%d, %d)", x, y)
+        return 0  # ทำเหมือนหยิบได้ เพื่อให้เห็น log ของการลาก/โยนต่อ
+
+    def move_window(self, handle: int, dx: int, dy: int) -> None:
+        log.debug("[dry-run] move window %+d %+d", dx, dy)
+
+    def throw_window(self, handle: int, vx: int, vy: int) -> None:
+        log.info("[dry-run] throw window at %+d %+d px/s", vx, vy)
+
 
 def launch_target(target: str, args: str = "") -> None:
     """เปิดสิ่งที่ระบุด้วยโปรแกรมเริ่มต้นของ OS (เหมือนพิมพ์ในกล่อง Run ของ Windows)
@@ -115,6 +143,110 @@ def launch_target(target: str, args: str = "") -> None:
         return
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     subprocess.Popen([opener, target], start_new_session=True)
+
+
+def glide_offset(vx: float, vy: float) -> tuple[int, int]:
+    """ระยะที่หน้าต่างไหลต่อหลังโยน (px)"""
+    return (round(vx * THROW_GLIDE_S), round(vy * THROW_GLIDE_S))
+
+
+def keep_on_screen(
+    rect: tuple[int, int, int, int],
+    dx: int,
+    dy: int,
+    bounds: tuple[int, int, int, int],
+    margin: int = THROW_KEEP_VISIBLE,
+) -> tuple[int, int]:
+    """ลดระยะ (dx, dy) ให้หน้าต่าง ``rect`` = (left, top, right, bottom) ยังเหลือบนจออย่างน้อย ``margin`` px
+
+    ``bounds`` = (left, top, right, bottom) ของจอทั้งหมด ขอบบนห้ามเลยจอขึ้นไป (จะจับแถบชื่อไม่ได้)
+    """
+    left, top, right, _bottom = rect
+    b_left, b_top, b_right, b_bottom = bounds
+    new_left = min(max(left + dx, b_left - (right - left) + margin), b_right - margin)
+    new_top = min(max(top + dy, b_top), b_bottom - margin)
+    return (new_left - left, new_top - top)
+
+
+def _win32_window_api():
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.WindowFromPoint.argtypes = (wintypes.POINT,)
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = (wintypes.HWND, wintypes.UINT)
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetClassNameW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.IsZoomed.argtypes = (wintypes.HWND,)
+    user32.IsZoomed.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = (
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.UINT,
+    )  # fmt: skip
+    user32.SetWindowPos.restype = wintypes.BOOL
+    return ctypes, wintypes, user32
+
+
+def win32_grab_window(x: int, y: int, *, allow_own: bool = False) -> int | None:
+    """หน้าต่างหลัก (root) ใต้จุด (x, y) ที่หยิบได้ — ไม่รวม desktop/taskbar และหน้าต่างของ AETHER เอง"""
+    if sys.platform != "win32":
+        return None
+    ctypes, wintypes, user32 = _win32_window_api()
+    child = user32.WindowFromPoint(wintypes.POINT(x, y))
+    window = user32.GetAncestor(child, _GA_ROOT) if child else None
+    if not window:
+        return None
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+    if pid.value == os.getpid() and not allow_own:
+        return None  # HUD / หน้าต่าง debug ของเราเอง
+    buffer = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(window, buffer, len(buffer))
+    if not should_minimize(buffer.value):  # desktop / taskbar
+        return None
+    if user32.IsZoomed(window):
+        user32.ShowWindow(window, _SW_RESTORE)  # ขยายเต็มจออยู่: คืนขนาดปกติก่อนลาก (เหมือนลากด้วยเมาส์)
+    return int(window)
+
+
+def win32_window_rect(handle: int) -> tuple[int, int, int, int] | None:
+    if sys.platform != "win32":
+        return None
+    ctypes, wintypes, user32 = _win32_window_api()
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(handle, ctypes.byref(rect)):
+        return None
+    return (rect.left, rect.top, rect.right, rect.bottom)
+
+
+def win32_move_window(handle: int, dx: int, dy: int) -> bool:
+    rect = win32_window_rect(handle)
+    if rect is None:
+        return False
+    _, _, user32 = _win32_window_api()
+    return bool(user32.SetWindowPos(handle, None, rect[0] + dx, rect[1] + dy, 0, 0, _SWP_MOVE_ONLY))
+
+
+def win32_virtual_screen() -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) ของทุกจอรวมกัน (physical px)"""
+    import ctypes
+
+    metrics = ctypes.windll.user32.GetSystemMetrics
+    left, top = metrics(76), metrics(77)  # SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN
+    return (
+        left,
+        top,
+        left + metrics(78),
+        top + metrics(79),
+    )  # SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN
 
 
 def should_minimize(window_class: str) -> bool:
@@ -212,6 +344,21 @@ class PynputBackend:
     def launch(self, target: str, args: str) -> None:
         launch_target(target, args)
 
+    def grab_window(self, x: int, y: int) -> int | None:
+        if sys.platform != "win32":
+            log.info("window grabbing is only supported on Windows")
+        return win32_grab_window(x, y)
+
+    def move_window(self, handle: int, dx: int, dy: int) -> None:
+        win32_move_window(handle, dx, dy)
+
+    def throw_window(self, handle: int, vx: int, vy: int) -> None:
+        rect = win32_window_rect(handle)
+        if rect is None:
+            return
+        dx, dy = keep_on_screen(rect, *glide_offset(vx, vy), win32_virtual_screen())
+        win32_move_window(handle, dx, dy)
+
     def _key(self, name: str):
         """ชื่อปุ่ม → key ของ pynput
 
@@ -274,6 +421,7 @@ class ActionExecutor:
     ) -> None:
         self._backend = backend
         self._launcher = tuple(launcher)
+        self._grabbed: int | None = None  # หน้าต่างที่ถืออยู่ (✊ ลาก)
         self._pressed: set[str] = set()
         self._keys_down: list[str] = []
         self._actions: dict[str, Hotkey | str] = {
@@ -297,11 +445,16 @@ class ActionExecutor:
             except Exception:
                 log.exception("input backend failed on %s", event.kind.value)
 
+    @property
+    def grabbed_window(self) -> int | None:
+        return self._grabbed
+
     def release_all(self) -> None:
-        """ปล่อยทุกปุ่มเมาส์และคีย์ที่กดค้าง (เรียกซ้ำได้ ปลอดภัยเสมอ)"""
+        """ปล่อยทุกปุ่มเมาส์และคีย์ที่กดค้าง และวางหน้าต่างที่ถืออยู่ (เรียกซ้ำได้ ปลอดภัยเสมอ)"""
         for button in sorted(self._pressed):
             self._release(button)
         self._release_keys()
+        self._grabbed = None
 
     def _execute_one(self, event: GestureEvent) -> None:
         kind = event.kind
@@ -327,6 +480,17 @@ class ActionExecutor:
             self._with_keys(("ctrl",), lambda: self._backend.scroll(0, event.dy))
         elif kind is EventKind.ACTION:
             self._run_action(event.name)
+        elif kind is EventKind.WINDOW_GRAB:
+            self._grabbed = self._backend.grab_window(event.x, event.y)
+            if self._grabbed is None:
+                log.info("ไม่มีหน้าต่างที่หยิบได้ตรง (%d, %d)", event.x, event.y)
+        elif kind is EventKind.WINDOW_MOVE:
+            if self._grabbed is not None:
+                self._backend.move_window(self._grabbed, event.dx, event.dy)
+        elif kind is EventKind.WINDOW_RELEASE:
+            handle, self._grabbed = self._grabbed, None
+            if handle is not None and (event.dx or event.dy):
+                self._backend.throw_window(handle, event.dx, event.dy)
         elif kind is EventKind.DISARMED:
             self.release_all()  # กันพลาดอีกชั้น: disarm แล้วต้องไม่มีปุ่มค้าง
         # ARMED: แจ้งสถานะเท่านั้น

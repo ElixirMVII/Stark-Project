@@ -194,6 +194,7 @@ class GesturesConfig:
     fist_hold_ms: int = 600
     arm_hold_ms: int = 1000
     zoom_step: float = 0.06
+    window_grab: bool = True  # ✊ แล้วขยับ = หยิบหน้าต่างใต้เคอร์เซอร์ลาก/โยน (✊ นิ่งๆ ยังย่อหน้าต่างตามเดิม)
 
     def __post_init__(self) -> None:
         _require(0.0 < self.swipe_dist_x <= 1.0, "gestures.swipe_dist_x ต้องอยู่ในช่วง (0, 1]")

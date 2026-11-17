@@ -220,3 +220,48 @@ def test_monitors_are_enumerated_in_physical_pixels(qapp):
 
     matched = match_qt_screens(monitors, QGuiApplication.screens())
     assert all(screen is not None for screen in matched)
+
+
+def test_window_under_point_can_be_grabbed_and_moved(qapp):
+    """หยิบหน้าต่างจริงด้วย WindowFromPoint + ขยับด้วย SetWindowPos (ใช้หน้าต่าง Qt ของ test เอง)"""
+    from PySide6.QtWidgets import QWidget
+
+    from aether.actions import win32_grab_window, win32_move_window, win32_window_rect
+
+    window = QWidget()
+    window.setWindowTitle("AETHER grab test")
+    window.setGeometry(200, 200, 400, 300)
+    window.show()
+    window.raise_()
+    window.activateWindow()
+    for _ in range(20):
+        qapp.processEvents()
+        time.sleep(0.02)
+    hwnd = int(window.winId())
+    rect = win32_window_rect(hwnd)
+    assert rect is not None
+    center = ((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
+    try:
+        assert win32_grab_window(*center) is None  # หน้าต่างของ process ตัวเองห้ามหยิบ
+        grabbed = win32_grab_window(*center, allow_own=True)
+        if grabbed is None:
+            pytest.skip("มีหน้าต่างอื่นบังจุดกึ่งกลาง (session นี้วางหน้าต่าง test ไว้ข้างหลัง)")
+        assert grabbed == hwnd
+        assert win32_move_window(hwnd, 37, 21)
+        moved = win32_window_rect(hwnd)
+        assert (moved[0] - rect[0], moved[1] - rect[1]) == (37, 21)
+        assert (moved[2] - moved[0], moved[3] - moved[1]) == (rect[2] - rect[0], rect[3] - rect[1])
+    finally:
+        window.close()
+
+
+def test_desktop_is_never_grabbed():
+    from aether.actions import win32_grab_window
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetShellWindow.restype = wintypes.HWND
+    shell = user32.GetShellWindow()
+    if not shell:
+        pytest.skip("ไม่มี shell window ใน session นี้")
+    grabbed = win32_grab_window(-30000, -30000)  # นอกทุกจอ → ไม่มีหน้าต่าง
+    assert grabbed is None

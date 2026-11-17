@@ -154,6 +154,8 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
         "armed": 0,  # จำนวนครั้งที่ถูก arm / disarm ด้วยท่า 🤟
         "disarmed": 0,
         "launches": 0,  # เปิดรายการจากเมนูวงกลม
+        "window_grabs": 0,  # ✊ หยิบหน้าต่าง
+        "window_throws": 0,  # ปล่อยหน้าต่างขณะเคลื่อนเร็ว
     }
     for event in events:
         if event.kind is EventKind.CLICK:
@@ -178,6 +180,10 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
                 key = "launches"
             if key in summary:
                 summary[key] += 1
+        elif event.kind is EventKind.WINDOW_GRAB:
+            summary["window_grabs"] += 1
+        elif event.kind is EventKind.WINDOW_RELEASE:
+            summary["window_throws"] += bool(event.dx or event.dy)
         elif event.kind is EventKind.ARMED:
             summary["armed"] += 1
         elif event.kind is EventKind.DISARMED:

@@ -210,11 +210,15 @@ class HudOverlay(QWidget):
         shockwaves = {
             EventKind.BUTTON_DOWN: theme.accent,
             EventKind.BUTTON_UP: theme.primary,
+            EventKind.WINDOW_GRAB: theme.accent,
+            EventKind.WINDOW_RELEASE: theme.primary,
         }
         sounds = {
             EventKind.CLICK: "click",
             EventKind.BUTTON_DOWN: "click",
             EventKind.BUTTON_UP: "release",
+            EventKind.WINDOW_GRAB: "click",
+            EventKind.WINDOW_RELEASE: "release",
             EventKind.ARMED: "arm",
             EventKind.DISARMED: "disarm",
         }
