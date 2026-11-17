@@ -82,11 +82,11 @@ class Sim:
     ],
 )
 def test_parse_source(text, kind, path):
+    from pathlib import Path
+
     spec = parse_source(text)
     assert spec.kind == kind
-    assert (str(spec.path) if spec.path else None) == (str(path) if path else None) or (
-        spec.path is not None and spec.path.name.endswith("x.jsonl")
-    )
+    assert spec.path == (Path(path) if path else None)  # Path: ตัวคั่นตาม OS (\\ บน Windows)
     assert spec.simulated == (kind != "camera")
 
 
@@ -382,7 +382,10 @@ def test_null_tracker_refuses_images():
 
 
 def test_source_spec_text():
-    assert str(SourceSpec("replay", parse_source("replay:a/b.jsonl").path)) == "replay:a/b.jsonl"
+    from pathlib import Path
+
+    spec = SourceSpec("replay", parse_source("replay:a/b.jsonl").path)
+    assert str(spec) == f"replay:{Path('a/b.jsonl')}"
     assert str(SourceSpec("mouse")) == "mouse"
 
 
