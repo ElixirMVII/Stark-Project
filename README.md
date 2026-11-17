@@ -3,10 +3,12 @@
 ควบคุม Windows ด้วยมือผ่านเว็บแคม พร้อม HUD โฮโลแกรมแบบโปร่งใส
 ("AETHER" เป็นชื่อโค้ดเนม)
 
-> **สถานะ: v1 ครบทุก milestone (M0–M4)**
+> **สถานะ: v1 ครบทุก milestone (M0–M4) + backlog บางส่วน**
 > ใช้มือคุมเมาส์ได้ครบ (ขยับ คลิก ดับเบิลคลิก ลาก คลิกขวา สกรอล) พร้อม HUD และเสียง มีท่าพิเศษ
 > (แบมือปัด 4 ทิศ, กำมือค้างเพื่อย่อหน้าต่าง, จีบสองมือเพื่อซูม, 🤟 เพื่อ ARM/DISARM),
 > system tray, calibration wizard และ build เป็น `aether.exe` ที่รันได้โดยไม่ต้องมี Python
+> หลัง v1 เพิ่ม: หลายจอ, ธีมสี, เมนูวงกลมเปิดแอป (👍), หยิบ/โยนหน้าต่าง (✊ + ขยับ)
+> และ CI ที่รัน test + build `aether.exe` บน Windows ทุกครั้งที่ push
 >
 > โค้ดผ่าน unit test ทั้งหมด แต่ **ยังไม่ได้ทดสอบกับกล้องจริงบน Windows** — ทำตาม
 > [checklist ทดสอบด้วยมือ](#ทดสอบด้วยมือ) ก่อนใช้งานจริง และเริ่มด้วย `--dry-run` เสมอ
@@ -462,7 +464,9 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 | M1 | Pointer + คลิก + ลาก + สกรอล | ✅ โค้ดเสร็จ · รอทดสอบกับกล้องจริง |
 | M2 | HUD overlay + เสียง | ✅ โค้ดเสร็จ · รอทดสอบบน Windows จริง |
 | M3 | ท่าพิเศษ (swipe, กำมือ, ซูมสองมือ, 🤟) | ✅ โค้ดเสร็จ · รอทดสอบกับกล้องจริง |
-| M4 | Tray, calibration, log, build เป็น `.exe` | ✅ โค้ดเสร็จ · build ผ่านบน Linux · รอ build/ทดสอบบน Windows |
+| M4 | Tray, calibration, log, build เป็น `.exe` | ✅ โค้ดเสร็จ · build + smoke test ผ่านบน Windows (CI) · รอทดสอบกับกล้องจริง |
+| หลัง v1 | หลายจอ, ธีมสี, เมนูเปิดแอป, หยิบ/โยนหน้าต่าง | ✅ โค้ดเสร็จ · ส่วน Win32 ผ่าน CI · รอทดสอบกับกล้องจริง |
+| backlog | สั่งด้วยเสียงแบบ offline, เทรนท่าเองด้วย MediaPipe Model Maker | ยังไม่ทำ — ต้องเพิ่ม dependency ใหม่ |
 
 การตัดสินใจที่ต่างจาก spec จดไว้ใน [`docs/DECISIONS.md`](docs/DECISIONS.md)
 ที่มาและ license ของ asset อยู่ใน [`assets/LICENSES.md`](assets/LICENSES.md)
