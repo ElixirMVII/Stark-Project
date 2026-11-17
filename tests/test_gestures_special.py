@@ -590,3 +590,70 @@ def test_only_known_event_kinds_are_emitted():
     driver.hold(make_hand(0.8, 0.4, **FIST), 900)
     assert {e.kind for e in driver.events} <= set(INPUT_KINDS)
     assert set(actions(driver.events)) == {"swipe_right", "fist_hold"}
+
+
+# ---- กันท่าติดเอง (เกณฑ์ M3: < 1 ครั้งต่อการใช้งานปกติ 5 นาที) ------------------ #
+
+
+def test_five_minutes_of_normal_use_with_label_flicker_triggers_nothing_special():
+    """จำลองใช้งานปกติ 5 นาที: ชี้ คลิก ลาก สกรอล โดยโมเดลตอบท่าพิเศษผิดแวบๆ (1–2 เฟรม) เป็นระยะ
+    และมีมืออีกข้างวางพักในท่านิ้วชิดกัน — ต้องไม่มีท่าพิเศษติดเองเลย
+    """
+    import random
+
+    rng = random.Random(42)
+    driver = Driver(make_engine())
+    driver.engine.set_armed(True)
+    resting = make_hand(0.25, 0.62, pinch=PINCHED, side="left")  # มือซ้ายวางพัก นิ้วชิดกัน
+    x, y = 0.5, 0.4
+    special = ("Open_Palm", "Closed_Fist", "ILoveYou")
+
+    def frame(pinch=OPEN, gesture="None"):
+        driver.step(make_hand(x, y, pinch=pinch, gesture=gesture), resting)
+
+    total_frames = 5 * 60 * 30
+    while len(driver.states) < total_frames:
+        activity = rng.random()
+        if activity < 0.45:  # ขยับเคอร์เซอร์ (บางครั้งเร็วมาก)
+            tx, ty = rng.uniform(0.18, 0.82), rng.uniform(0.13, 0.67)
+            steps = rng.randint(3, 25)
+            x0, y0 = x, y
+            for i in range(steps):
+                x, y = x0 + (tx - x0) * (i + 1) / steps, y0 + (ty - y0) * (i + 1) / steps
+                flicker = rng.random() < 0.04  # โมเดลตอบท่าพิเศษผิดแวบเดียว
+                frame(gesture=rng.choice(special) if flicker else "None")
+                if flicker and rng.random() < 0.5:
+                    frame(gesture="None")
+        elif activity < 0.65:  # คลิก
+            for _ in range(rng.randint(3, 5)):
+                frame(pinch=PINCHED)
+            for _ in range(rng.randint(3, 8)):
+                frame()
+        elif activity < 0.75:  # ลาก
+            for _ in range(10):
+                frame(pinch=PINCHED)
+            for _ in range(rng.randint(5, 20)):
+                x = min(0.82, max(0.18, x + rng.uniform(-0.02, 0.02)))
+                frame(pinch=PINCHED)
+            for _ in range(4):
+                frame()
+        elif activity < 0.85:  # สกรอล
+            for _ in range(rng.randint(8, 30)):
+                y = min(0.67, max(0.13, y + rng.uniform(-0.02, 0.02)))
+                frame(gesture="Victory")
+            for _ in range(4):
+                frame()
+        else:  # พักมือนิ่งๆ
+            for _ in range(rng.randint(10, 60)):
+                frame(gesture=rng.choice(special) if rng.random() < 0.02 else "None")
+
+    unwanted = of_kind(
+        driver.events, EventKind.ACTION, EventKind.ZOOM, EventKind.ARMED, EventKind.DISARMED
+    )
+    assert unwanted == []
+    assert driver.engine.armed
+    assert State.TWO_HAND_ZOOM not in driver.states
+    # การใช้งานปกติยังทำงานครบ
+    assert len(of_kind(driver.events, EventKind.CLICK)) > 20
+    assert len(of_kind(driver.events, EventKind.BUTTON_DOWN)) > 5
+    assert len(of_kind(driver.events, EventKind.SCROLL)) > 5

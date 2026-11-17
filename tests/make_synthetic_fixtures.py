@@ -23,6 +23,7 @@ from aether.tracker import Hand, HandFrame
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 JITTER_PX = 0.4  # landmark สั่นเล็กน้อยเหมือนของจริง
+START_DISARMED = {"synthetic_arm_toggle.jsonl"}  # ไฟล์ที่ต้องเล่นซ้ำโดยเริ่มแบบ DISARMED
 
 
 class Script:
@@ -33,9 +34,28 @@ class Script:
         self._frames: list[HandFrame] = []
         self._t = 0
 
-    def _emit(self, hand: Hand | None) -> None:
-        self._frames.append(make_frame(self._t, *(() if hand is None else (hand,))))
+    def _emit(self, *hands: Hand | None) -> None:
+        self._frames.append(make_frame(self._t, *(h for h in hands if h is not None)))
         self._t += FRAME_MS
+
+    def _jitter(self) -> tuple[float, float]:
+        return (
+            self._rng.uniform(-JITTER_PX, JITTER_PX) / 640,
+            self._rng.uniform(-JITTER_PX, JITTER_PX) / 480,
+        )
+
+    def both(self, ms: int, half_start: float, half_end: float | None = None, **pose) -> Script:
+        """สองมือ: มือขวาอยู่ที่ x = 0.5 + half, มือซ้ายที่ 0.5 − half (half วิ่งจาก start → end)"""
+        half_end = half_start if half_end is None else half_end
+        frames = max(1, round(ms / FRAME_MS))
+        for i in range(frames):
+            half = half_start + (half_end - half_start) * i / max(frames - 1, 1)
+            (jx, jy), (kx, ky) = self._jitter(), self._jitter()
+            self._emit(
+                make_hand(0.5 + half + jx, 0.4 + jy, **pose),
+                make_hand(0.5 - half + kx, 0.4 + ky, side="left", **pose),
+            )
+        return self
 
     def hold(self, ms: int, x: float = 0.5, y: float = 0.4, **pose) -> Script:
         return self.move(ms, (x, y), (x, y), **pose)
@@ -44,8 +64,7 @@ class Script:
         frames = max(1, round(ms / FRAME_MS))
         for i in range(frames):
             p = i / max(frames - 1, 1)
-            jx = self._rng.uniform(-JITTER_PX, JITTER_PX) / 640
-            jy = self._rng.uniform(-JITTER_PX, JITTER_PX) / 480
+            jx, jy = self._jitter()
             x = start[0] + (end[0] - start[0]) * p + jx
             y = start[1] + (end[1] - start[1]) * p + jy
             self._emit(make_hand(x, y, **pose))
@@ -103,7 +122,78 @@ def build() -> dict[str, tuple[str, dict, Script]]:
         .hold(300)
     )
 
+    palm = {"gesture": "Open_Palm"}
+    swipes = Script(7).hold(400)
+    for end in ((0.82, 0.40), (0.18, 0.40), (0.50, 0.14), (0.50, 0.66)):
+        swipes.hold(500, **palm).move(200, (0.5, 0.4), end, **palm)
+        swipes.hold(300, *end, **palm).move(700, end, (0.5, 0.4), **palm)  # กลับช้าๆ
+        swipes.hold(600, **palm)
+    swipes.hold(400)
+
+    fist_hold = (
+        Script(8)
+        .hold(500)
+        .hold(1000, fist=True, gesture="Closed_Fist")
+        .hold(1500)
+        .hold(400, fist=True, gesture="Closed_Fist")  # กำแวบเดียว: ไม่ถึงเวลา
+        .hold(500)
+    )
+
+    zoom = (
+        Script(9)
+        .both(400, 0.10)
+        .both(200, 0.10, pinch=PINCHED)
+        .both(600, 0.10, 0.20, pinch=PINCHED)  # กางออก = ซูมเข้า
+        .both(300, 0.20, pinch=PINCHED)
+        .both(600, 0.20, 0.10, pinch=PINCHED)  # หุบเข้า = ซูมออก
+        .both(200, 0.10, pinch=PINCHED)
+        .both(500, 0.10)
+    )
+
+    arm_toggle = (
+        Script(10)
+        .hold(400)
+        .hold(300, pinch=PINCHED)  # ยัง DISARMED: ต้องไม่คลิก
+        .hold(300)
+        .hold(1400, gesture="ILoveYou")  # → ARMED
+        .hold(1000)
+        .click()
+        .hold(600)
+        .hold(1400, gesture="ILoveYou")  # → DISARMED
+        .hold(600)
+        .hold(300, pinch=PINCHED)  # DISARMED อีกครั้ง: ต้องไม่คลิก
+        .hold(300)
+    )
+
     return {
+        "synthetic_swipes.jsonl": (
+            "🖐 แบมือนิ่งแล้วปัด ขวา → ซ้าย → ขึ้น → ลง (กลับมากลางช้าๆ ทุกครั้ง)",
+            {
+                "swipe_right": 1,
+                "swipe_left": 1,
+                "swipe_up": 1,
+                "swipe_down": 1,
+                "left_clicks": 0,
+                "drags": 0,
+                "fist_holds": 0,
+            },
+            swipes,
+        ),
+        "synthetic_fist_hold.jsonl": (
+            "✊ กำมือค้าง 1 วินาที แล้วกำแวบเดียวอีกครั้ง",
+            {"fist_holds": 1, "left_clicks": 0, "drags": 0},
+            fist_hold,
+        ),
+        "synthetic_two_hand_zoom.jsonl": (
+            "จีบสองมือพร้อมกัน กางออกแล้วหุบเข้า",
+            {"zoom_in": [9, 12], "zoom_out": [9, 12], "left_clicks": 0, "drags": 0},
+            zoom,
+        ),
+        "synthetic_arm_toggle.jsonl": (
+            "เริ่มแบบ DISARMED: จีบ (ไม่ติด) → 🤟 ค้างเพื่อ arm → คลิก → 🤟 ค้างเพื่อ disarm → จีบ (ไม่ติด)",
+            {"armed": 1, "disarmed": 1, "left_clicks": 1, "drags": 0},
+            arm_toggle,
+        ),
         "synthetic_click_x3.jsonl": (
             "จีบคลิก 3 ครั้ง ห่างกัน ~1 วินาที",
             {"left_clicks": 3, "double_clicks": 0, "right_clicks": 0, "drags": 0},
@@ -154,6 +244,7 @@ def write_all(directory: Path = FIXTURES_DIR) -> list[Path]:
             "camera": "640x480 @ 30fps (handsim)",
             "mirror": True,
             "dominant_hand": "right",
+            "start_armed": name not in START_DISARMED,
             "expect": expect,
         }
         with FrameWriter(path, **header) as writer:

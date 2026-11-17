@@ -272,3 +272,38 @@ def test_camera_error_shows_alert_on_hud(qapp):
         assert h.wait(lambda: h.app.hud._badge._alert == "CAMERA LOST")
     finally:
         h.app.shutdown()
+
+
+# ---- M3: ท่าพิเศษผ่านทั้งแอป ------------------------------------------------- #
+
+
+def test_swipe_and_fist_hold_reach_the_backend(harness):
+    harness.api.fire(1)
+    assert harness.wait(lambda: harness.state() is State.POINTER)
+
+    palm = {"gesture": "Open_Palm"}
+    harness.tracker.hand = make_hand(0.5, 0.4, **palm)
+    assert harness.wait(lambda: harness.app.pipeline.snapshot.swipe_ready)
+
+    for i in range(1, 11):  # ปัดขวา ~0.3 ของเฟรมใน ~150ms
+        harness.tracker.hand = make_hand(0.5 + 0.03 * i, 0.4, **palm)
+        time.sleep(0.015)
+    keys = ["ctrl", "win", "right"]
+    expected = [("key_down", k) for k in keys] + [("key_up", k) for k in reversed(keys)]
+    assert harness.wait(
+        lambda: [c for c in harness.backend.calls if c[0].startswith("key")] == expected
+    )
+
+    harness.tracker.hand = make_hand(0.8, 0.4)
+    assert harness.wait(lambda: harness.state() is State.POINTER)
+    harness.tracker.hand = make_hand(0.8, 0.4, fist=True, gesture="Closed_Fist")
+    assert harness.wait(lambda: harness.calls("minimize") == [("minimize",)], timeout=3.0)
+    assert harness.calls("press") == []  # ไม่มีคลิกแถม
+
+
+def test_iloveyou_gesture_arms_and_updates_listeners(harness):
+    armed: list[bool] = []
+    harness.app.armed_changed.connect(armed.append)
+    harness.tracker.hand = make_hand(gesture="ILoveYou")
+    assert harness.wait(lambda: armed == [True], timeout=4.0)
+    assert harness.app.pipeline.armed

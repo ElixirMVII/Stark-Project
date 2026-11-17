@@ -187,7 +187,9 @@ class Reticle:
         )
 
         if snapshot.state is State.SCROLL:
-            self._paint_scroll_chevrons(painter, cx, cy, base, alpha)
+            self._paint_chevrons(painter, cx, cy, base, alpha, vertical=True)
+        elif snapshot.state is State.TWO_HAND_ZOOM:
+            self._paint_chevrons(painter, cx, cy, hot, alpha, vertical=False)
 
         # วงแหวนรอให้การจีบกลายเป็นการลาก
         if snapshot.state is State.PINCH_PENDING and snapshot.pinch_button == "left":
@@ -239,17 +241,28 @@ class Reticle:
                 ),
             )
 
-    def _paint_scroll_chevrons(
-        self, painter: QPainter, cx: float, cy: float, color: QColor, alpha: float
+    def _paint_chevrons(
+        self,
+        painter: QPainter,
+        cx: float,
+        cy: float,
+        color: QColor,
+        alpha: float,
+        *,
+        vertical: bool,
     ) -> None:
-        """ลูกศรขึ้น/ลงบอกว่าอยู่ในโหมดสกรอล"""
+        """ลูกศรคู่ชี้ออกจากกลาง: แนวตั้ง = โหมดสกรอล, แนวนอน = ซูมสองมือ"""
         path = QPainterPath()
         for direction in (-1.0, 1.0):
-            tip = cy + direction * 15.0
-            base_y = cy + direction * 9.0
-            path.moveTo(cx - 6.0, base_y)
-            path.lineTo(cx, tip)
-            path.lineTo(cx + 6.0, base_y)
+            tip, base = direction * 15.0, direction * 9.0
+            if vertical:
+                path.moveTo(cx - 6.0, cy + base)
+                path.lineTo(cx, cy + tip)
+                path.lineTo(cx + 6.0, cy + base)
+            else:
+                path.moveTo(cx + base, cy - 6.0)
+                path.lineTo(cx + tip, cy)
+                path.lineTo(cx + base, cy + 6.0)
         glow_stroke(painter, path, color, 1.8, strength=0.7, alpha=alpha)
 
 

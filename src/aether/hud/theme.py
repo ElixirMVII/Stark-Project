@@ -24,6 +24,7 @@ __all__ = [
     "Theme",
     "arc_path",
     "chamfered_rect",
+    "draw_label",
     "glow_stroke",
     "with_alpha",
 ]
@@ -187,6 +188,23 @@ def arc_path(
     path.arcMoveTo(rect, qt_start)
     path.arcTo(rect, qt_start, -sweep_deg)
     return path
+
+
+def draw_label(
+    painter: QPainter, box: QRectF, flags: Qt.AlignmentFlag, text: str, color: QColor, alpha: float
+) -> None:
+    """ข้อความลอย (ไม่ได้อยู่ในแผง) พร้อมแถบเข้มโปร่งแสงรองหลัง ให้อ่านออกบนพื้นหลังสว่าง
+
+    ใช้ฟอนต์ที่ตั้งไว้ใน painter แล้ว แถบรองหลังพอดีกับข้อความและไม่ล้น ``box``
+    """
+    if alpha <= 0.0 or not text:
+        return
+    bounds = painter.boundingRect(box, flags, text).adjusted(-6.0, -2.0, 6.0, 2.0).intersected(box)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(2, 8, 14, round(255 * 0.5 * min(alpha, 1.0))))
+    painter.drawRoundedRect(bounds, 4.0, 4.0)
+    painter.setPen(with_alpha(color, alpha))
+    painter.drawText(box, flags, text)
 
 
 def chamfered_rect(rect: QRectF, cut: float) -> QPainterPath:

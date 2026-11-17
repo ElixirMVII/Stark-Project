@@ -5,7 +5,8 @@
 
 header มี ``expect`` (ไม่บังคับ) บอกผลที่ควรได้เมื่อป้อนไฟล์นี้เข้า gesture engine เช่น
 ``{"left_clicks": 2, "drags": 0}`` — ``tests/test_replay.py`` จะตรวจทุกไฟล์ใน ``tests/fixtures/``
-ค่าเป็นจำนวนเต็ม (ต้องเท่าเป๊ะ) หรือ ``[ต่ำสุด, สูงสุด]``
+ค่าเป็นจำนวนเต็ม (ต้องเท่าเป๊ะ) หรือ ``[ต่ำสุด, สูงสุด]`` และ ``start_armed`` (ค่าเริ่มต้น ``true``)
+บอกว่าตอนเล่นซ้ำให้เริ่มในสถานะ ARMED หรือไม่ (ใช้ ``false`` กับไฟล์ที่ทดสอบการ arm ด้วยท่า 🤟)
 """
 
 from __future__ import annotations
@@ -117,13 +118,19 @@ def replay(
     *,
     armed: bool = True,
 ) -> Iterator[GestureEvent]:
-    """ป้อนเฟรมเข้า gesture engine ตัวใหม่ แล้วคืน event ตามลำดับ (ไม่แตะ OS)"""
+    """ป้อนเฟรมเข้า gesture engine ตัวใหม่ แล้วคืน event ตามลำดับ (ไม่แตะ OS)
+
+    ``armed`` คือสถานะตอนเริ่ม ตอนจบจะปล่อยปุ่มที่ยังกดค้าง (``BUTTON_UP``) ให้ แต่ไม่รายงาน
+    การ arm/disarm ที่ตัว replay ทำเอง — event ``ARMED``/``DISARMED`` ที่ได้จึงมาจากท่ามือล้วนๆ
+    """
     engine = GestureEngine(config or Config(), screen or ScreenGeometry(0, 0, 1920, 1080))
     if armed:
         engine.set_armed(True)
     for frame in frames:
         yield from engine.update(frame)[1]
-    yield from engine.set_armed(False)
+    for event in engine.set_armed(False):
+        if event.kind is not EventKind.DISARMED:
+            yield event
 
 
 def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
@@ -137,6 +144,15 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
         "scroll_down": 0,
         "scroll_left": 0,
         "scroll_right": 0,
+        "swipe_left": 0,
+        "swipe_right": 0,
+        "swipe_up": 0,
+        "swipe_down": 0,
+        "fist_holds": 0,
+        "zoom_in": 0,  # จำนวน notch ของ Ctrl+ล้อเมาส์
+        "zoom_out": 0,
+        "armed": 0,  # จำนวนครั้งที่ถูก arm / disarm ด้วยท่า 🤟
+        "disarmed": 0,
     }
     for event in events:
         if event.kind is EventKind.CLICK:
@@ -152,4 +168,15 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
             summary["scroll_down"] += max(-event.dy, 0)
             summary["scroll_right"] += max(event.dx, 0)
             summary["scroll_left"] += max(-event.dx, 0)
+        elif event.kind is EventKind.ZOOM:
+            summary["zoom_in"] += max(event.dy, 0)
+            summary["zoom_out"] += max(-event.dy, 0)
+        elif event.kind is EventKind.ACTION:
+            key = "fist_holds" if event.name == "fist_hold" else event.name
+            if key in summary:
+                summary[key] += 1
+        elif event.kind is EventKind.ARMED:
+            summary["armed"] += 1
+        elif event.kind is EventKind.DISARMED:
+            summary["disarmed"] += 1
     return summary

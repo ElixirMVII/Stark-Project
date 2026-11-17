@@ -33,7 +33,7 @@ def _matches(actual: int, expected) -> bool:
 
 
 def test_fixture_directory_has_recordings():
-    assert len(FIXTURES) >= 6
+    assert len(FIXTURES) >= 10
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
@@ -45,7 +45,8 @@ def test_fixture_replays_to_expected_events(path: Path):
     config = parse_config(
         {"tracking": {"dominant_hand": recording.header.get("dominant_hand", "right")}}
     )
-    summary = summarize_events(replay(recording.frames, config))
+    armed = recording.header.get("start_armed", True)
+    summary = summarize_events(replay(recording.frames, config, armed=armed))
     mismatches = {
         key: (summary[key], expected)
         for key, expected in recording.expect.items()
@@ -148,7 +149,7 @@ def test_replay_disarmed_produces_no_input():
 def test_replay_ends_by_releasing_a_held_drag():
     frames = [make_frame(i * 33, make_hand(pinch=OPEN if i < 8 else PINCHED)) for i in range(40)]
     kinds = [e.kind for e in replay(frames) if e.kind is not EventKind.MOVE]
-    assert kinds == [EventKind.BUTTON_DOWN, EventKind.BUTTON_UP, EventKind.DISARMED]
+    assert kinds == [EventKind.BUTTON_DOWN, EventKind.BUTTON_UP]  # ไม่รายงาน disarm ของ replay เอง
 
 
 def test_summarize_events():
@@ -163,6 +164,15 @@ def test_summarize_events():
         GestureEvent(EventKind.SCROLL, dx=4),
         GestureEvent(EventKind.SCROLL, dx=-1),
         GestureEvent(EventKind.MOVE, x=1, y=1),
+        GestureEvent(EventKind.ACTION, name="swipe_left"),
+        GestureEvent(EventKind.ACTION, name="swipe_up"),
+        GestureEvent(EventKind.ACTION, name="swipe_up"),
+        GestureEvent(EventKind.ACTION, name="fist_hold"),
+        GestureEvent(EventKind.ACTION, name="something_else"),
+        GestureEvent(EventKind.ZOOM, dy=4),
+        GestureEvent(EventKind.ZOOM, dy=-1),
+        GestureEvent(EventKind.ARMED),
+        GestureEvent(EventKind.DISARMED),
     ]
     assert summarize_events(events) == {
         "left_clicks": 2,
@@ -173,6 +183,15 @@ def test_summarize_events():
         "scroll_down": 2,
         "scroll_left": 1,
         "scroll_right": 4,
+        "swipe_left": 1,
+        "swipe_right": 0,
+        "swipe_up": 2,
+        "swipe_down": 0,
+        "fist_holds": 1,
+        "zoom_in": 4,
+        "zoom_out": 1,
+        "armed": 1,
+        "disarmed": 1,
     }
 
 

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 from handsim import PINCHED, make_frame, make_hand
@@ -15,6 +17,7 @@ from aether.camera import FramePacket
 from aether.config import Config, parse_config
 from aether.gestures import EngineSnapshot, EventKind, GestureEvent, State
 from aether.hud import boot as boot_module
+from aether.hud import radial as radial_module
 from aether.hud import reticle as reticle_module
 from aether.hud.boot import BootSequence
 from aether.hud.overlay import OVERLAY_FLAGS, HudOverlay
@@ -25,6 +28,7 @@ from aether.hud.panels import (
     TelemetrySampler,
     TelemetryValues,
 )
+from aether.hud.radial import ChargeRing, Radial, action_label
 from aether.hud.reticle import Reticle
 from aether.hud.theme import Theme, arc_path, chamfered_rect, with_alpha
 from aether.mapping import ScreenGeometry
@@ -439,7 +443,7 @@ def test_radar_zooms_hand_to_fit_and_prefers_dominant(theme):
 def test_panels_can_be_disabled(qapp, theme):
     config = parse_config({"hud": {"show_telemetry": False, "show_radar": False}})
     overlay = HudOverlay(config, FHD, theme=theme, sampler=FakeSampler())
-    assert set(overlay._elements) == {"boot", "badge", "reticle"}
+    assert set(overlay._elements) == {"boot", "badge", "radial", "charge", "reticle"}
     overlay.start(boot=False)
     overlay.show_packet(packet(snapshot()))
     render(overlay)
@@ -569,6 +573,193 @@ def test_full_sequence_renders_without_error(hud):
         hud.handle_events((GestureEvent(EventKind.CLICK, x=100 * i, y=100 * i),))
         run(hud, 0.2, steps=6)
         assert not render(hud).isNull()
+
+
+# ---- M3: เข็มทิศ 4 ทิศ + วงแหวนชาร์จ ---------------------------------------- #
+
+DEFAULT_ACTIONS = dataclasses.asdict(Config().actions)
+
+
+def _paint_element(element, size: int = 420) -> QImage:
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    element.paint(painter, 10.0)
+    painter.end()
+    return image
+
+
+def _assert_paints_inside_rect(element, image: QImage) -> None:
+    rect = element.rect().toAlignedRect()
+    assert opaque_pixels(image, rect) > 100
+    outside = sum(
+        image.pixelColor(x, y).alpha() > 0
+        for x in range(0, image.width(), 3)
+        for y in range(0, image.height(), 3)
+        if not rect.contains(x, y)
+    )
+    assert outside == 0
+
+
+@pytest.mark.parametrize(
+    ("spec", "label"),
+    [
+        ("ctrl+win+left", "DESK"),
+        ("ctrl+win+right", "DESK"),
+        ("win+tab", "TASKS"),
+        ("win+d", "DESKTOP"),
+        ("minimize_foreground", "MINIMIZE"),
+        ("none", "—"),
+        ("alt+tab", "ALT+TAB"),  # action ที่ผู้ใช้ตั้งเอง → แสดงชื่อปุ่มลัด
+        ("f11", "F11"),
+        ("ctrl+nope", "?"),
+    ],
+)
+def test_action_labels(spec, label):
+    assert action_label(spec) == label
+
+
+def test_radial_labels_follow_config(theme):
+    assert Radial(theme, DEFAULT_ACTIONS).labels == {
+        "left": "DESK",
+        "right": "DESK",
+        "up": "TASKS",
+        "down": "DESKTOP",
+    }
+    custom = Radial(theme, {**DEFAULT_ACTIONS, "swipe_up": "alt+tab", "swipe_down": "none"})
+    assert custom.labels["up"] == "ALT+TAB" and custom.labels["down"] == "—"
+
+
+def test_radial_only_shows_in_gesture_mode(theme):
+    radial = Radial(theme, DEFAULT_ACTIONS)
+    radial.advance(0.0)
+    radial.set_state(QPointF(210, 210), snapshot(State.POINTER))
+    assert radial.advance(0.5) is False and radial.rect().isEmpty()
+
+    radial.set_state(QPointF(210, 210), snapshot(State.GESTURE, swipe_ready=True))
+    assert radial.advance(0.6) is True
+    radial.advance(1.0)
+    assert radial.alpha == 1.0
+    assert radial.rect().center() == QPointF(210, 210)
+    _assert_paints_inside_rect(radial, _paint_element(radial))
+
+    radial.set_state(QPointF(210, 210), snapshot(State.POINTER))
+    radial.advance(1.1)
+    assert radial.advance(2.0) is False
+    assert radial.alpha == 0.0 and radial.rect().isEmpty()
+
+
+def test_radial_is_dim_until_swipe_is_ready(theme):
+    def brightness(ready: bool) -> int:
+        radial = Radial(theme, DEFAULT_ACTIONS)
+        radial.advance(0.0)
+        radial.set_state(QPointF(210, 210), snapshot(State.GESTURE, swipe_ready=ready))
+        radial.advance(1.0)
+        image = _paint_element(radial)
+        return sum(image.pixelColor(x, 210).alpha() for x in range(280, 310))
+
+    assert brightness(True) > 1.5 * brightness(False) > 0
+
+
+def test_radial_flash_highlights_direction_and_outlives_gesture_mode(theme):
+    radial = Radial(theme, DEFAULT_ACTIONS)
+    radial.advance(0.0)
+    radial.set_state(QPointF(210, 210), snapshot(State.GESTURE, swipe_ready=True))
+    radial.advance(1.0)
+    radial.flash("right", 10.0)
+    radial.flash("sideways", 10.0)  # ทิศที่ไม่รู้จัก: ไม่ทำอะไร
+    radial.set_state(QPointF(210, 210), snapshot(State.POINTER))  # engine ออกจากโหมดไปแล้ว
+    assert radial.advance(10.05) is True
+    image = _paint_element(radial)
+    right, left = image.pixelColor(298, 210), image.pixelColor(122, 210)
+    assert right.red() > 200 and right.blue() < 120  # ทิศที่ปัด = สีอำพัน
+    assert left.blue() > left.red()  # ทิศอื่นยังเป็นสีหลัก
+
+    assert radial.advance(10.0 + radial_module.FLASH_SECONDS + 0.01) is True  # รอบลบภาพ
+    radial.advance(11.5)
+    assert radial.advance(12.0) is False and radial.rect().isEmpty()
+
+
+def test_charge_ring_fills_with_progress_and_labels_the_outcome(theme):
+    ring = ChargeRing(theme, DEFAULT_ACTIONS)
+    center = QPointF(210, 210)
+    assert ring.set_state(center, snapshot()) is False and ring.rect().isEmpty()
+
+    fist = snapshot(State.CHARGING, charge=0.5, charge_kind="fist_hold")
+    assert ring.set_state(center, fist) is True
+    assert ring.set_state(center, fist) is False  # ไม่เปลี่ยน = ไม่ต้องวาดใหม่
+    assert ring.label() == "MINIMIZE"
+    half = _paint_element(ring)
+    _assert_paints_inside_rect(ring, half)
+    # ครึ่งวง: ด้านขวา (0°–180° ตามเข็ม) สว่าง ด้านซ้ายเป็นแค่รางจางๆ
+    assert half.pixelColor(210 + 56, 210).alpha() > 200
+    assert half.pixelColor(210 - 56, 210).alpha() < 120
+
+    ring.set_state(center, snapshot(State.CHARGING, charge=1.0, charge_kind="fist_hold"))
+    assert _paint_element(ring).pixelColor(210 - 56, 210).alpha() > 200
+
+    ring.set_state(center, snapshot(State.DISARMED, armed=False, charge=0.3, charge_kind="arm"))
+    assert ring.label() == "ARM"
+    ring.set_state(center, snapshot(State.CHARGING, charge=0.3, charge_kind="arm"))
+    assert ring.label() == "DISARM"
+    assert ring.set_state(center, snapshot()) is True and ring.rect().isEmpty()
+
+    custom = ChargeRing(theme, {**DEFAULT_ACTIONS, "fist_hold": "alt+f4"})
+    custom.set_state(center, fist)
+    assert custom.label() == "ALT+F4"
+
+
+def test_overlay_shows_radial_and_charge_and_cleans_up(hud):
+    finish_boot(hud)
+    hud.show_packet(packet(snapshot(State.GESTURE, cursor=(960, 540), swipe_ready=True)))
+    run(hud, 0.4)
+    image = render(hud)
+    assert opaque_pixels(image, QRect(640 + 70, 360 - 20, 110, 40)) > 30  # ลูกศร + ป้ายด้านขวา
+
+    hud.show_packet(packet(snapshot(State.CHARGING, charge=0.6, charge_kind="fist_hold")))
+    run(hud, 0.4)
+    image = render(hud)
+    assert image.pixelColor(640 + 56, 360).alpha() > 150  # วงแหวนชาร์จ
+    assert opaque_pixels(image, QRect(640 + 100, 360 - 20, 80, 40)) == 0  # เข็มทิศหายแล้ว
+
+    hud.show_packet(packet(snapshot(State.POINTER)))
+    run(hud, 0.4)
+    image = render(hud)
+    assert opaque_pixels(image, QRect(640 - 90, 360 + 62, 180, 30)) == 0  # ป้ายใต้วงแหวนหายแล้ว
+
+
+def test_swipe_and_fist_events_drive_hud_and_sounds(hud):
+    finish_boot(hud)
+    hud._sounds.played.clear()
+    hud.show_packet(packet(snapshot(State.GESTURE, swipe_ready=True)))
+    hud.handle_events(
+        (
+            GestureEvent(EventKind.ACTION, x=960, y=540, name="swipe_left"),
+            GestureEvent(EventKind.ACTION, x=960, y=540, name="fist_hold"),
+            GestureEvent(EventKind.ZOOM, x=960, y=540, dy=1),
+        )
+    )
+    assert hud._sounds.played == ["swipe", "minimize"]
+    assert "left" in hud._radial._flash
+    assert len(hud._reticle._shockwaves) == 1
+    run(hud, 0.1, steps=4)
+    assert not render(hud).isNull()
+
+
+def test_reticle_paints_zoom_mode_inside_its_rect(theme):
+    reticle = Reticle(theme)
+    reticle.set_state(QPointF(150, 150), snapshot(State.TWO_HAND_ZOOM, pinch_level=1.0), 0.0)
+    reticle.advance(0.0)
+    reticle.advance(1.0)
+    image = QImage(300, 300, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    reticle.paint(painter, 1.0)
+    painter.end()
+    assert image.pixelColor(150 + 15, 150).alpha() > 150  # หัวลูกศรแนวนอน
+    _assert_paints_inside_rect(reticle, image)
 
 
 # ---- theme --------------------------------------------------------------- #

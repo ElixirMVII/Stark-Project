@@ -55,6 +55,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--note", default="", help="คำอธิบายว่าทำท่าอะไร (เก็บใน header)")
     parser.add_argument("--expect", action="append", default=[], metavar="NAME=N")
     parser.add_argument("--list-expect", action="store_true", help="แสดงชื่อที่ใช้กับ --expect")
+    parser.add_argument(
+        "--start-disarmed",
+        action="store_true",
+        help="ตอนเล่นซ้ำให้เริ่มแบบ DISARMED (ใช้กับไฟล์ที่ทดสอบการ arm ด้วยท่า 🤟)",
+    )
     parser.add_argument("--config", type=Path, help="ไฟล์ config (ค่าเริ่มต้น: config.toml)")
     args = parser.parse_args(argv)
 
@@ -90,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         "camera": description,
         "mirror": config.camera.mirror,
         "dominant_hand": config.tracking.dominant_hand,
+        "start_armed": not args.start_disarmed,
         "expect": expect,
     }
     try:
@@ -136,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     recording = read_recording(args.output)
-    summary = summarize_events(replay(recording.frames, config))
+    summary = summarize_events(replay(recording.frames, config, armed=not args.start_disarmed))
     happened = ", ".join(f"{k}={v}" for k, v in summary.items() if v) or "ไม่มี event"
     print(f"ผลเมื่อป้อนเข้า gesture engine: {happened}")
     if not expect:

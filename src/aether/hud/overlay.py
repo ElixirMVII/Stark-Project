@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from typing import Protocol
@@ -23,6 +24,7 @@ from ..mapping import ScreenGeometry, physical_to_logical
 from ..sound import SoundPlayer
 from .boot import BootSequence
 from .panels import HandRadar, StatusBadge, TelemetryPanel, TelemetrySampler
+from .radial import ChargeRing, Radial
 from .reticle import Reticle
 from .theme import Theme
 
@@ -89,6 +91,9 @@ class HudOverlay(QWidget):
 
         self._reticle = Reticle(self._theme)
         self._boot = BootSequence(self._theme)
+        actions = dataclasses.asdict(config.actions)
+        self._radial = Radial(self._theme, actions)
+        self._charge = ChargeRing(self._theme, actions)
         self._badge = StatusBadge(self._theme, dry_run=dry_run)
         self._telemetry = TelemetryPanel(self._theme) if config.hud.show_telemetry else None
         self._radar = (
@@ -100,6 +105,8 @@ class HudOverlay(QWidget):
             self._elements["telemetry"] = self._telemetry
         if self._radar is not None:
             self._elements["radar"] = self._radar
+        self._elements["radial"] = self._radial
+        self._elements["charge"] = self._charge
         self._elements["reticle"] = self._reticle
         self._painted: dict[str, QRectF] = {}
 
@@ -153,6 +160,10 @@ class HudOverlay(QWidget):
         position = self.to_logical(*snapshot.cursor) if snapshot.cursor is not None else None
         self._reticle.set_state(position, snapshot, self._clock())
         self._refresh("reticle")
+        self._radial.set_state(position, snapshot)
+        self._refresh("radial")
+        if self._charge.set_state(position, snapshot):
+            self._refresh("charge")
 
         if self._badge.set_snapshot(snapshot):
             self._refresh("badge")
@@ -179,6 +190,16 @@ class HudOverlay(QWidget):
             elif kind is EventKind.BUTTON_UP:
                 self._reticle.add_shockwave(self.to_logical(event.x, event.y), theme.primary, now)
                 self._play("release")
+            elif kind is EventKind.ACTION:
+                if event.name.startswith("swipe_"):
+                    self._radial.flash(event.name.removeprefix("swipe_"), now)
+                    self._refresh("radial")
+                    self._play("swipe")
+                else:  # กำมือค้าง (ค่าเริ่มต้น: ย่อหน้าต่าง)
+                    self._reticle.add_shockwave(
+                        self.to_logical(event.x, event.y), theme.accent, now
+                    )
+                    self._play("minimize")
             elif kind is EventKind.ARMED:
                 self.set_armed(True)
                 self._play("arm")
@@ -206,7 +227,8 @@ class HudOverlay(QWidget):
     def _tick(self) -> None:
         now = self._clock()
         # วาดใหม่ขณะยังมีแอนิเมชัน และอีกหนึ่งครั้งหลังจบ (เพื่อลบภาพสุดท้ายออก)
-        for key, element in (("boot", self._boot), ("reticle", self._reticle)):
+        animated = (("boot", self._boot), ("radial", self._radial), ("reticle", self._reticle))
+        for key, element in animated:
             was_painted = not self._painted.get(key, QRectF()).isEmpty()
             if element.advance(now) or was_painted:
                 self._refresh(key)
