@@ -229,6 +229,7 @@ class ActionsConfig:
 class HotkeysConfig:
     toggle_arm: str = "<ctrl>+<alt>+g"
     quit: str = "<ctrl>+<alt>+q"
+    mark_incident: str = "<ctrl>+<alt>+m"  # จด 5 วินาทีที่ผ่านมาลง incidents/ (แอปเพิ่งทำพลาด)
 
     def __post_init__(self) -> None:
         parsed = []
@@ -239,7 +240,7 @@ class HotkeysConfig:
                 raise ConfigError(f"hotkeys.{f.name}: {exc}") from exc
         _require(
             len(set(parsed)) == len(parsed),
-            "hotkeys.toggle_arm กับ hotkeys.quit ต้องไม่ซ้ำกัน",
+            "hotkeys.toggle_arm, hotkeys.quit และ hotkeys.mark_incident ต้องไม่ซ้ำกัน",
         )
 
 

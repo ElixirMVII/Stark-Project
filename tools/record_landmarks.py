@@ -23,28 +23,14 @@ from pathlib import Path
 from aether.camera import CameraError, OpenCVCamera
 from aether.config import ConfigError, load_config, model_path
 from aether.pipeline import clock_ms
-from aether.recording import FrameWriter, read_recording, replay, summarize_events
+from aether.recording import (
+    FrameWriter,
+    parse_expect,
+    read_recording,
+    replay,
+    summarize_events,
+)
 from aether.tracker import HandTracker
-
-
-def parse_expect(items: list[str]) -> dict[str, int | list[int]]:
-    """``["left_clicks=3", "scroll_up=3..20"]`` → ``{"left_clicks": 3, "scroll_up": [3, 20]}``"""
-    known = summarize_events(())
-    expect: dict[str, int | list[int]] = {}
-    for item in items:
-        key, sep, value = item.partition("=")
-        key, value = key.strip(), value.strip()
-        if not sep or key not in known:
-            raise ValueError(f"--expect {item!r}: ใช้ได้เฉพาะ {', '.join(known)} ในรูป NAME=N")
-        try:
-            if ".." in value:
-                low, high = value.split("..", 1)
-                expect[key] = [int(low), int(high)]
-            else:
-                expect[key] = int(value)
-        except ValueError:
-            raise ValueError(f"--expect {item!r}: ค่าต้องเป็นจำนวนเต็มหรือช่วง A..B") from None
-    return expect
 
 
 def main(argv: list[str] | None = None) -> int:

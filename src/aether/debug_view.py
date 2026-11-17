@@ -17,13 +17,15 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QPushButton, QWidget
 
 from .camera import FramePacket
 from .config import Config
 from .geometry import pointer_anchor
 from .gestures import EngineSnapshot, State
 from .tracker import GESTURE_NONE, LM, Hand, hand_connections
+from .tuning import current_values
+from .tuning_panel import PANEL_WIDTH, TuningPanel
 
 __all__ = ["DebugView"]
 
@@ -39,7 +41,10 @@ _MARGIN = 8
 
 
 class DebugView(QWidget):
-    """แสดง :class:`FramePacket` ล่าสุด (เรียก method ทั้งหมดจาก UI thread)"""
+    """แสดง :class:`FramePacket` ล่าสุด (เรียก method ทั้งหมดจาก UI thread)
+
+    มีแผง live tuning (:class:`~aether.tuning_panel.TuningPanel`) ด้านขวา เปิด/ปิดด้วยปุ่ม TUNE หรือกด T
+    """
 
     closed = Signal()
 
@@ -73,7 +78,34 @@ class DebugView(QWidget):
         self.setMinimumSize(320, 240)
         self.resize(config.camera.width, config.camera.height)
 
+        self._tuning = TuningPanel(current_values(config), self)
+        self._tuning.hide()
+        self._tune_button = QPushButton("TUNE", self)
+        self._tune_button.setCheckable(True)
+        self._tune_button.setFixedSize(58, 24)
+        self._tune_button.move(_MARGIN, _MARGIN)
+        self._tune_button.toggled.connect(self.set_tuning_visible)
+
     # ---- API ------------------------------------------------------------ #
+
+    @property
+    def tuning(self) -> TuningPanel:
+        return self._tuning
+
+    def set_tuning_visible(self, visible: bool) -> None:
+        if visible and self._tuning.isHidden():
+            self.resize(self.width() + PANEL_WIDTH, self.height())  # ภาพกล้องไม่เล็กลง
+        self._tuning.setVisible(visible)
+        blocked = self._tune_button.blockSignals(True)
+        self._tune_button.setChecked(visible)
+        self._tune_button.blockSignals(blocked)
+        self._place_tuning()
+        self.update()
+
+    def set_config(self, config: Config) -> None:
+        """config ที่ปรับสดแล้ว (กรอบ active region ฯลฯ วาดตามค่าใหม่)"""
+        self._config = config
+        self.update()
 
     def show_packet(self, packet: FramePacket) -> None:
         self._packet = packet
@@ -102,6 +134,19 @@ class DebugView(QWidget):
         self.closed.emit()
         super().closeEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_T:
+            self.set_tuning_visible(self._tuning.isHidden())
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        self._place_tuning()
+        super().resizeEvent(event)
+
+    def _place_tuning(self) -> None:
+        self._tuning.setGeometry(self.width() - PANEL_WIDTH, 0, PANEL_WIDTH, self.height())
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.fillRect(self.rect(), _BACKGROUND)
@@ -127,10 +172,14 @@ class DebugView(QWidget):
     # ---- drawing -------------------------------------------------------- #
 
     def _image_rect(self, width: int, height: int) -> QRectF:
-        """พื้นที่วาดภาพกล้อง: ใหญ่สุดที่พอดีหน้าต่างโดยคงสัดส่วน"""
-        scale = min(self.width() / width, self.height() / height)
+        """พื้นที่วาดภาพกล้อง: ใหญ่สุดที่พอดีหน้าต่าง (ไม่รวมแผง tuning) โดยคงสัดส่วน"""
+        area = self._view_width()
+        scale = min(area / width, self.height() / height)
         w, h = width * scale, height * scale
-        return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
+        return QRectF((area - w) / 2, (self.height() - h) / 2, w, h)
+
+    def _view_width(self) -> float:
+        return float(self.width() - (PANEL_WIDTH if self._tuning.isVisible() else 0))
 
     def _draw_image(self, painter: QPainter, target: QRectF, frame: np.ndarray | None) -> None:
         if frame is None:  # แหล่งจำลอง (mouse / replay): ไม่มีภาพ วาดพื้นทึบแทน
@@ -270,7 +319,7 @@ class DebugView(QWidget):
             return
         width, height = 120.0, 10.0
         box = QRectF(
-            self.width() - _MARGIN - width - 12,
+            self._view_width() - _MARGIN - width - 12,
             self.height() - _MARGIN - height - 28,
             width + 12,
             height + 28,
@@ -315,7 +364,7 @@ class DebugView(QWidget):
         painter.setFont(self._label_font)
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 16
-        box = QRectF(self.width() - _MARGIN - width, _MARGIN, width, metrics.height() + 8)
+        box = QRectF(self._view_width() - _MARGIN - width, _MARGIN, width, metrics.height() + 8)
         painter.setPen(QPen(color, 1.5))
         painter.setBrush(QBrush(_PANEL))
         painter.drawRoundedRect(box, 4, 4)

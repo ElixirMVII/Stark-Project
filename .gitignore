@@ -20,3 +20,5 @@ assets/sounds/*.wav
 calibration.json
 logs/
 *.log
+poses.json
+incidents/

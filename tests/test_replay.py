@@ -10,8 +10,8 @@ from conftest import load_tool
 from handsim import OPEN, PINCHED, make_frame, make_hand
 from make_synthetic_fixtures import FIXTURES_DIR, write_all
 
-from aether.config import parse_config
 from aether.gestures import EventKind, GestureEvent
+from aether.incidents import read_incident, replay_incident
 from aether.recording import (
     FrameWriter,
     read_recording,
@@ -42,11 +42,10 @@ def test_fixture_replays_to_expected_events(path: Path):
     assert recording.frames, "ไฟล์อัดไม่มีเฟรม"
     if not recording.expect:
         pytest.skip("ไฟล์นี้ไม่มี expect ใน header")
-    config = parse_config(
-        {"tracking": {"dominant_hand": recording.header.get("dominant_hand", "right")}}
-    )
-    armed = recording.header.get("start_armed", True)
-    summary = summarize_events(replay(recording.frames, config, armed=armed))
+    # ใช้ config / จอ / ท่าที่สอนเอง จาก header (incident ที่ย้ายมาด้วย tools/replay.py --promote)
+    # ไฟล์อัดทั่วไปที่ไม่มี config ใช้ค่าเริ่มต้น + มือข้างถนัดใน header
+    timeline = replay_incident(read_incident(path))
+    summary = summarize_events(e for _, _, events in timeline for e in events)
     mismatches = {
         key: (summary[key], expected)
         for key, expected in recording.expect.items()

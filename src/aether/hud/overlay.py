@@ -129,6 +129,8 @@ class HudOverlay(QWidget):
 
         self._fps = 0.0
         self._latency_ms = 0.0
+        self._notice_shown = False
+        self.paint_count = 0  # จำนวนครั้งที่วาด (สถิติ FPS ของ HUD ต่อ session)
         self._layout_panels()
 
         self._frame_timer = QTimer(self)
@@ -272,6 +274,15 @@ class HudOverlay(QWidget):
         if self._telemetry is not None and self._telemetry.set_armed(armed):
             self._refresh("telemetry")
 
+    def notify(self, text: str, sound: str | None = "click") -> None:
+        """ข้อความยืนยันชั่วครู่ใต้ป้ายสถานะ + เสียงสั้นๆ (เช่น จดเหตุการณ์แล้ว)"""
+        if self._badge is not None:
+            self._badge.notify(text, self._clock())
+            self._notice_shown = True
+            self._refresh("badge")
+        if sound:
+            self._play(sound)
+
     def set_alert(self, text: str | None) -> None:
         """ข้อความเตือนใต้ป้ายสถานะ (เช่น กล้องหลุด) — ``None`` = ล้าง"""
         if self._badge is not None and self._badge.set_alert(text):
@@ -294,6 +305,9 @@ class HudOverlay(QWidget):
             was_painted = not self._painted.get(key, QRectF()).isEmpty()
             if element.advance(now) or was_painted:
                 self._refresh(key)
+        if self._badge is not None and (self._badge.advance(now) or self._notice_shown):
+            self._notice_shown = self._badge.notice is not None
+            self._refresh("badge")  # ข้อความยืนยันกระพริบ (และวาดอีกครั้งตอนหายไป)
 
     def _sample_telemetry(self) -> None:
         if self._telemetry is None:
@@ -343,6 +357,7 @@ class HudOverlay(QWidget):
         super().resizeEvent(event)
 
     def paintEvent(self, event) -> None:
+        self.paint_count += 1
         painter = QPainter(self)
         painter.setClipRegion(event.region())
         # ล้างบริเวณที่จะวาดให้โปร่งใสก่อน (หน้าต่างไม่มีพื้นหลัง)
@@ -406,3 +421,10 @@ class HudGroup:
 
     def set_alert(self, text: str | None) -> None:
         self.primary.set_alert(text)
+
+    def notify(self, text: str, sound: str | None = "click") -> None:
+        self.primary.notify(text, sound)
+
+    @property
+    def paint_count(self) -> int:
+        return sum(overlay.paint_count for overlay in self.overlays)

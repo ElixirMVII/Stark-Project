@@ -169,10 +169,13 @@ class CameraThread(QThread):
         source: FrameSource,
         processor: Callable[[np.ndarray | HandFrame, int], FrameResult],
         parent=None,
+        *,
+        observer: Callable[[FramePacket], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._source = source
         self._processor = processor
+        self._observer = observer  # เรียกทุกเฟรมใน worker thread (สถิติ session)
         self._lock = threading.Lock()
         self._latest: FramePacket | None = None
         self._notified = False
@@ -259,6 +262,11 @@ class CameraThread(QThread):
             self._notified = True
         if notify:
             self.frame_ready.emit()
+        if self._observer is not None:
+            try:
+                self._observer(packet)
+            except Exception:
+                log.exception("frame observer failed")
 
     def _report_camera_error(self, message: str) -> None:
         if message != self._last_error:  # ไม่ log ซ้ำทุกรอบที่ลองใหม่

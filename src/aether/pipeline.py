@@ -16,8 +16,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .actions import ActionExecutor
+from .config import Config
 from .gestures import LOST_RELEASE_MS, EngineSnapshot, EventKind, GestureEngine, GestureEvent
 from .tracker import HandFrame
+
+if TYPE_CHECKING:
+    from .incidents import FlightRecorder
 
 if TYPE_CHECKING:
     import numpy as np
@@ -50,8 +54,10 @@ class Pipeline:
         *,
         on_events: Callable[[tuple[GestureEvent, ...]], None] | None = None,
         clock: Callable[[], int] = clock_ms,
+        recorder: FlightRecorder | None = None,
     ) -> None:
         self._track = track
+        self._recorder = recorder
         self._engine = engine
         self._executor = executor
         self._on_events = on_events
@@ -84,10 +90,12 @@ class Pipeline:
             hands = self._track(frame, timestamp_ms)
         try:
             with self._lock:
-                _, events = self._engine.update(hands)
+                state, events = self._engine.update(hands)
                 self._executor.execute(events)
                 snapshot = self._engine.snapshot
                 self._last_frame_ms = self._clock()
+            if self._recorder is not None:  # ย้อนหลัง 5 วินาทีสำหรับ Ctrl+Alt+M (lock ของตัวเอง)
+                self._recorder.record(hands, state, events)
         except BaseException:
             self._executor.release_all()  # logic พัง: อย่างน้อยต้องไม่ทิ้งปุ่มเมาส์ค้าง
             raise
@@ -95,6 +103,11 @@ class Pipeline:
         return FrameResult(hands, snapshot, tuple(events))
 
     # ---- thread ใดก็ได้ -------------------------------------------------- #
+
+    def reconfigure(self, config: Config) -> None:
+        """ใช้ config ใหม่ทันที (live tuning) — ดู :meth:`GestureEngine.reconfigure`"""
+        with self._lock:
+            self._engine.reconfigure(config)
 
     def set_armed(self, armed: bool) -> bool:
         """ตั้งสถานะ ARM คืนสถานะหลังตั้ง (มีผลทันที แม้กล้องจะค้างอยู่)"""

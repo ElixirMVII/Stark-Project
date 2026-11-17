@@ -6,6 +6,7 @@ overlay จะสั่งวาดใหม่เฉพาะแผงที่
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -62,6 +63,7 @@ class StatusBadge:
     WIDTH = 252.0
     HEIGHT = 64.0
     ALERT_HEIGHT = 22.0
+    NOTICE_SECONDS = 1.5
 
     def __init__(self, theme: Theme, *, dry_run: bool = False) -> None:
         self._theme = theme
@@ -70,10 +72,25 @@ class StatusBadge:
         self._mode = State.DISARMED.value
         self._hands = 0
         self._alert: str | None = None
+        self._notice: tuple[str, float] | None = None  # (ข้อความ, เวลาเริ่ม) ข้อความยืนยันชั่วครู่
         self._viewport = QRectF()
 
     def set_viewport(self, viewport: QRectF) -> None:
         self._viewport = QRectF(viewport)
+
+    def notify(self, text: str, now: float) -> None:
+        """ข้อความยืนยันที่กระพริบใต้ป้ายราว ``NOTICE_SECONDS`` วินาที (เช่น จดเหตุการณ์แล้ว)"""
+        self._notice = (text, now)
+
+    @property
+    def notice(self) -> str | None:
+        return self._notice[0] if self._notice is not None else None
+
+    def advance(self, now: float) -> bool:
+        """คืน ``True`` ระหว่างที่ข้อความยืนยันยังแสดงอยู่ (ต้องวาดใหม่)"""
+        if self._notice is not None and now - self._notice[1] >= self.NOTICE_SECONDS:
+            self._notice = None
+        return self._notice is not None
 
     def rect(self) -> QRectF:
         height = self.HEIGHT + self.ALERT_HEIGHT  # จองที่ของบรรทัดเตือนไว้เสมอ กรอบจะได้ไม่เปลี่ยนขนาด
@@ -147,15 +164,18 @@ class StatusBadge:
             f"HANDS {self._hands}",
         )
 
+        line = QRectF(outer.left(), body.bottom() + 2.0, outer.width(), self.ALERT_HEIGHT - 2.0)
+        right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         if self._alert:
             painter.setPen(theme.danger)
             painter.setFont(theme.mono_font(13))
-            alert = QRectF(
-                outer.left(), body.bottom() + 2.0, outer.width(), self.ALERT_HEIGHT - 2.0
-            )
-            painter.drawText(
-                alert, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._alert
-            )
+            painter.drawText(line, right, self._alert)
+        elif self._notice is not None:
+            text, start = self._notice
+            blink = 0.55 + 0.45 * math.cos((now - start) * math.tau * 3.0)  # กระพริบ 3 ครั้ง/วินาที
+            painter.setPen(with_alpha(theme.accent, blink))
+            painter.setFont(theme.mono_font(13))
+            painter.drawText(line, right, text)
 
 
 @dataclass(frozen=True, slots=True)

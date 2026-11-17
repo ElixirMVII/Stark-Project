@@ -50,6 +50,7 @@ fist_hold   = "minimize_foreground"
 [hotkeys]
 toggle_arm = "<ctrl>+<alt>+g"
 quit       = "<ctrl>+<alt>+q"
+mark_incident = "<ctrl>+<alt>+m"   # แอปเพิ่งทำพลาด: จด 5 วินาทีที่ผ่านมาลง incidents/ (ไม่มีภาพ)
 
 [hud]
 enabled = true

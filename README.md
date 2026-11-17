@@ -170,6 +170,35 @@ log ทั้งหมดอยู่ที่ `logs\aether.log` (ข้าง `
 เก็บย้อนหลัง 5 ไฟล์ ถ้าโฟลเดอร์นั้นเขียนไม่ได้ (เช่นวางไว้ใน Program Files) จะใช้
 `%LOCALAPPDATA%\AETHER\logs\` แทน — แนบไฟล์นี้มาด้วยเวลาแจ้งปัญหา
 
+ทุกครั้งที่ปิดแอปจะเขียนสถิติของรอบนั้นลง `logs\session-YYYYMMDD-HHMMSS.json`: จำนวน event แต่ละชนิด,
+เวลาที่อยู่ในแต่ละ state, latency เฟรม→input (p50/p95), FPS ของกล้องและ HUD, จำนวน incident ที่จดไว้
+
+### จดปัญหาและจูนค่า
+
+**แอปทำพลาด → กด `Ctrl+Alt+M` ทันที** แอปจะเก็บ 5 วินาทีที่ผ่านมา (ตำแหน่งข้อนิ้ว + สถานะ + event —
+**ไม่มีภาพ**) ลง `incidents\YYYYMMDD-HHMMSS.jsonl` แล้วป้ายมุมขวาบนกระพริบ `INCIDENT SAVED` พร้อมเสียงสั้นๆ
+(เขียนไฟล์ใน thread แยก เคอร์เซอร์ไม่สะดุด) ยังไม่ต้องบอกว่าพลาดแบบไหน — ใส่ป้ายทีหลังได้:
+
+```powershell
+python tools\label_incidents.py            # ถามทีละไฟล์: 1=false_trigger 2=missed 3=jitter 4=wrong_click 5=other
+python tools\report.py                     # สรุป: latency p50/p95, FPS, ท่าที่ใช้, ปัญหาที่เจอบ่อย, ควรปรับค่าไหน
+python tools\replay.py incidents\20261118-093015.jsonl          # เล่นซ้ำแบบไม่มีหน้าจอ พิมพ์ timeline
+python tools\replay.py incidents\20261118-093015.jsonl --promote --expect swipe_up=0 --name no_swipe_scratching
+```
+
+- `false_trigger` = ติดเองทั้งที่ไม่ได้ตั้งใจ · `missed` = ทำแล้วไม่ติด · `jitter` = เคอร์เซอร์สั่น ·
+  `wrong_click` = คลิกผิดที่ · `other`
+- `replay.py` ใช้ config/จอ/ท่าที่สอนเองตอนเกิดเหตุ เล่นกี่รอบก็ได้ผลเดิม
+- `--promote --expect …` ย้ายไฟล์ไปเป็น test ใน `tests\fixtures\` — `--expect` คือสิ่งที่ **ควร** เกิด
+  (ชื่อที่ใช้ได้เหมือน `record_landmarks.py --list-expect`) แล้ว pytest จะตรวจทุกครั้ง
+  ส่งไฟล์ incident มาให้ก็ได้ ไฟล์มีแต่ตัวเลข
+
+**ปรับค่าสดๆ:** เปิดหน้าต่าง debug แล้วกดปุ่ม `TUNE` (หรือกด `T`) จะมีแผง slider ทางขวา:
+`pinch.on/off`, `one_euro.min_cutoff/beta`, `swipe_dist_x/y`, `cooldown_ms` — ขยับแล้วมีผลทันที
+(มือที่ตามอยู่ไม่หลุด) ค่าที่ขัดกัน เช่น `pinch.on` สูงกว่า `pinch.off` จะไม่ถูกใช้และแผงจะบอก
+กด **Save to config** เพื่อเขียนลง `config.toml` (คอมเมนต์เดิมอยู่ครบ — ถ้ามีค่า pinch ใน `calibration.json`
+จะอัปเดตในนั้นด้วย ไม่งั้นค่าที่บันทึกจะถูก calibration ทับ) หรือ **Reset** กลับค่าตอนเปิดแอป
+
 ### เปิด/ปิดการคุมเมาส์ (ARM / DISARM)
 
 แอป **เริ่มในสถานะ DISARMED เสมอ** — เห็นมือแต่ไม่ส่ง input ใดๆ ให้ Windows
@@ -179,6 +208,7 @@ log ทั้งหมดอยู่ที่ `logs\aether.log` (ข้าง `
 | `Ctrl+Alt+G` | สลับ ARM ↔ DISARM (ถ้ากำลังลากอยู่ จะปล่อยปุ่มเมาส์ให้ทันที) |
 | 🤟 ค้าง 1 วินาที (โป้ง+ชี้+ก้อย) | สลับ ARM ↔ DISARM ด้วยมือ — มีวงแหวนชาร์จบน HUD |
 | `Ctrl+Alt+Q` | ปิดแอป |
+| `Ctrl+Alt+M` | จด 5 วินาทีที่ผ่านมาว่าแอปทำพลาด (ดูหัวข้อ "จดปัญหาและจูนค่า") |
 
 ปุ่มลัดใช้ได้ทั้งตอนเปิดแป้นไทยและแป้นอังกฤษ เปลี่ยนปุ่มได้ที่ `[hotkeys]` ใน `config.toml`
 
@@ -365,7 +395,7 @@ key ที่พิมพ์ผิดหรือค่าที่อยู่�
 | `launcher.enabled` / `hold_ms` / `timeout_ms` / `items` | เมนูเปิดแอป: เปิด/ปิด, เวลาค้าง 👍, เวลาปิดเอง, รายการ (สูงสุด 8) | |
 | `poses.enabled` / `hold_ms` | ท่าที่สอนเอง: เปิด/ปิด, ต้องค้างนานเท่าไร | ติดเอง → เพิ่ม `hold_ms` |
 | `poses.sensitivity` | ความง่ายในการรับท่าที่สอนเอง (0.25–4, ค่าเริ่มต้น 1) | ทำท่าแล้วไม่ติด → เพิ่ม, ติดเอง → ลด |
-| `hotkeys.toggle_arm` / `quit` | ปุ่มลัด เช่น `"<ctrl>+<alt>+g"`, `"<ctrl>+<shift>+<f9>"` | ชนกับโปรแกรมอื่น |
+| `hotkeys.toggle_arm` / `quit` / `mark_incident` | ปุ่มลัด เช่น `"<ctrl>+<alt>+g"`, `"<ctrl>+<shift>+<f9>"` | ชนกับโปรแกรมอื่น |
 | `hud.enabled` / `opacity` | เปิด HUD, ความโปร่งรวม | |
 | `hud.theme` / `primary` / `accent` | ธีมสี หรือ `"custom"` + สีหลัก/สีเน้นที่ตั้งเอง (`"#RRGGBB"`) | |
 | `hud.show_telemetry` / `show_radar` | เปิด/ปิดแผง telemetry และ radar มือ | บังจอ / อยากลด CPU |
@@ -422,6 +452,10 @@ test ทั้งหมดรันได้โดยไม่ต้องมี
 - [ ] ลูกศรทั้ง 4 ทิศ → เข็มทิศบน HUD สว่างทิศนั้น + log ปุ่มลัดที่ผูกไว้
 - [ ] `3` ค้าง → วงแหวนชาร์จ → log ย่อหน้าต่าง · `5` ค้าง → สลับ ARM/DISARM · กด `1` กลับเป็นมือปกติ
 - [ ] HUD: คลิกทะลุได้, boot animation, แผง telemetry, เสียง (ถ้ามีไฟล์)
+- [ ] กด `Ctrl+Alt+M` → ป้ายขวาบนกระพริบ `INCIDENT SAVED` และมีไฟล์ใน `incidents\` ·
+      `python tools\replay.py incidents\<ไฟล์>.jsonl` พิมพ์ timeline ได้ และรันซ้ำได้ผลเดิม
+- [ ] หน้าต่าง debug กด `T` → แผง TUNE ขยับ `cooldown_ms` แล้ว Save → ค่าใน `config.toml` เปลี่ยน คอมเมนต์อยู่ครบ
+- [ ] ปิดแอป → มี `logs\session-*.json` · `python tools\report.py` แสดง p95 latency
 
 **M0 — เห็นมือ** (`python -m aether --debug --dry-run`)
 
@@ -550,6 +584,8 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 | M4 | Tray, calibration, log, build เป็น `.exe` | ✅ โค้ดเสร็จ · build + smoke test ผ่านบน Windows (CI) · รอทดสอบกับกล้องจริง |
 | หลัง v1 | หลายจอ, ธีมสี, เมนูเปิดแอป, หยิบ/โยนหน้าต่าง | ✅ โค้ดเสร็จ · ส่วน Win32 ผ่าน CI · รอทดสอบกับกล้องจริง |
 | หลัง v1 | สอนท่ามือเอง (แทน Model Maker — ดู D40) | ✅ โค้ดเสร็จ · รอทดสอบกับกล้องจริง |
+| v1 §4.1 | แหล่งเฟรมจำลอง `--source mouse` / `replay:PATH` | ✅ โค้ดเสร็จ · ลองได้โดยไม่ต้องมีกล้อง |
+| v1.1 M5 | จดปัญหา (`Ctrl+Alt+M`), สถิติ session, `report.py` / `replay.py` / `label_incidents.py`, live tuning | ✅ โค้ดเสร็จ · รอใช้งานจริง |
 | backlog | สั่งด้วยเสียงแบบ offline | ยังไม่ทำ — ต้องเพิ่ม dependency ใหม่ (พักไว้ก่อน) |
 
 การตัดสินใจที่ต่างจาก spec จดไว้ใน [`docs/DECISIONS.md`](docs/DECISIONS.md)
@@ -604,5 +640,5 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 - ประมวลผลในเครื่องทั้งหมด ตอนรันแอปไม่มีการต่อ network
   (มีแค่ `tools\download_assets.py` ที่ต่อ network ตอนติดตั้ง)
 - ไม่บันทึกภาพจากกล้องลงดิสก์ — `calibration.json` เก็บแค่ตัวเลข threshold และพื้นที่, `poses.json` เก็บแค่
-  ชื่อท่า ปุ่มลัด และรูปทรงมือเป็นตัวเลข, log เก็บแค่สถานะและ event (ไม่มีภาพหรือพิกัด landmark),
-  `tools\record_landmarks.py` เก็บแค่ตัวเลข landmark
+  ชื่อท่า ปุ่มลัด และรูปทรงมือเป็นตัวเลข, log และ `session-*.json` เก็บแค่สถานะ event และสถิติ (ไม่มีภาพ
+  หรือพิกัด landmark), `incidents\*.jsonl` และ `tools\record_landmarks.py` เก็บแค่ตัวเลข landmark

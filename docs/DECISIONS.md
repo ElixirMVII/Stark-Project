@@ -406,3 +406,29 @@ spec ระบุ "เทรนท่าเองด้วย MediaPipe Model Ma
   (pynput ดักได้แค่ทุกปุ่มพร้อมกัน) ปุ่มจึงไปถึงโปรแกรมที่โฟกัสอยู่ด้วย — บอกไว้ใน README
 - `--source mouse` บังคับ dry-run ทั้งใน `run()` และใน `AetherApp` (กันพลาดอีกชั้น); replay ไม่บังคับตาม spec
 - replay เล่นจบแล้วส่งเฟรมว่างต่อ (เหมือนมือออกจากกล้อง: ปล่อยปุ่ม กลับ IDLE) แทนการรายงานว่ากล้องหลุด
+
+## v1.1
+
+### D43 · M5 จดปัญหาและจูนค่า
+- **Flight recorder** อยู่ใน `Pipeline.process` (worker thread) มี lock ของตัวเอง เก็บ `HandFrame` + state + event
+  5 วินาทีล่าสุด; `Ctrl+Alt+M` (`hotkeys.mark_incident` — key ใหม่) คัดลอก list ใน lock แล้วเขียนไฟล์ใน
+  thread แยก worker จึงรอแค่ช่วงคัดลอก ไม่รอ disk
+- ไฟล์ incident = รูปแบบเดียวกับไฟล์อัดของ `record_landmarks.py` (อ่านด้วย `read_recording` ได้) เพิ่ม
+  `state`/`events` ต่อเฟรม และ header มี config ทั้งชุด, จอ, เวลาดับเบิลคลิก, ท่าที่สอนเอง (ถ้ามี),
+  `start_armed`, `label`, `note` — replay จึงได้ผลเดิมทุกรอบ ส่วน engine เริ่มจากศูนย์ที่เฟรมแรกของไฟล์
+  (ถ้าตอนนั้นกำลังค้างท่าอยู่ ผล replay อาจต่างจากเหตุการณ์จริง — ยอมรับได้ เพราะ spec ขอ deterministic)
+- fixture test (`test_replay.py`) ใช้ config/จอ/ท่าจาก header ด้วย — incident ที่ `--promote` จึงเป็น test ได้ทันที
+  `--expect` คือสิ่งที่ **ควร** เกิด: ย้ายได้แม้ engine ยังให้ผลไม่ตรง (test จะ fail จนแก้) หรือใช้ `--check`
+- **สถิติ session** เก็บจาก `CameraThread` (observer ทุกเฟรมใน worker — ไม่ใช่เฉพาะเฟรมที่ UI วาดทัน):
+  latency ใช้ `process_ms` เดิมของ debug view เก็บเป็น histogram 1 ms (รวมหลาย session ได้ถูกต้อง),
+  เวลาต่อ state คิดจากช่วงห่างระหว่างเฟรม (จำกัด 2 วินาทีต่อช่วง ไม่ให้ตอนกล้องค้างนับเกิน),
+  HUD FPS = จำนวนครั้งที่ overlay วาด ÷ เวลา (HUD วาดเฉพาะส่วนที่เปลี่ยน ค่านี้จึงต่ำกว่า 60 ตอนนิ่งๆ)
+- `report.py` จัดอันดับปัญหาจาก (ป้าย, ท่าของ event สำคัญตัวสุดท้ายในไฟล์) แล้วแนะนำ key ที่ควรปรับ
+- **Live tuning**: `GestureEngine.reconfigure` เปลี่ยน config ทั้งชุดใต้ lock เดียวกับ pipeline โดยไม่ล้าง
+  สถานะมือ และปรับค่า One Euro ในตัว filter (ไม่ reset — เคอร์เซอร์ไม่กระโดด); `pinch.on/off` เปลี่ยนพร้อมกัน
+  และค่าที่ขัดกันถูกปฏิเสธด้วยกติกาเดียวกับ config.toml
+- "Save to config" แก้ config.toml **ทีละบรรทัด** (`tuning.set_toml_value`) แทนการเขียนทั้งไฟล์ใหม่ เพราะ stdlib
+  มีแต่ตัวอ่าน TOML และตัวเขียนทั่วไปทิ้งคอมเมนต์ (ไม่เพิ่ม dependency) — ตรวจผลด้วย `tomllib` + `parse_config`
+  ก่อนเขียนจริง; ถ้า calibration.json มีค่า pinch (ซึ่งทับ config.toml) จะอัปเดตในนั้นด้วย
+- test ของ `--check` เดิมทิ้ง handler ของ logging ไว้กับ stderr ที่ pytest ปิดไปแล้ว — แก้ให้ใช้ fixture
+  `clean_logging` และเขียน log ลงโฟลเดอร์ชั่วคราว

@@ -67,5 +67,10 @@ class OneEuroFilter2D:
         self._fx.reset()
         self._fy.reset()
 
+    def set_params(self, min_cutoff: float, beta: float, d_cutoff: float) -> None:
+        """เปลี่ยนค่าระหว่างทำงาน (live tuning) โดยไม่ล้างค่าที่กรองไว้ — เคอร์เซอร์ไม่กระโดด"""
+        for f in (self._fx, self._fy):
+            f.min_cutoff, f.beta, f.d_cutoff = min_cutoff, beta, d_cutoff
+
     def __call__(self, x: float, y: float, t: float) -> tuple[float, float]:
         return (self._fx(x, t), self._fy(y, t))

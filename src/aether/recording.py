@@ -27,6 +27,8 @@ __all__ = [
     "FORMAT_VERSION",
     "FrameWriter",
     "Recording",
+    "compact_frame",
+    "parse_expect",
     "read_recording",
     "replay",
     "summarize_events",
@@ -47,7 +49,7 @@ class Recording:
         return dict(self.header.get("expect", {}))
 
 
-def _compact(frame: HandFrame, origin_ms: int) -> dict[str, Any]:
+def compact_frame(frame: HandFrame, origin_ms: int) -> dict[str, Any]:
     """dict ของเฟรมที่ปัดทศนิยมแล้ว (ไฟล์เล็กลงมาก ความละเอียดยังเกินพอ: 1e-5 ≈ 0.006px)"""
     data = frame.to_dict()
     data["timestamp_ms"] = frame.timestamp_ms - origin_ms
@@ -85,7 +87,7 @@ class FrameWriter:
             raise RuntimeError("FrameWriter ยังไม่ได้เปิด (ใช้กับ with)")
         if self._origin_ms is None:
             self._origin_ms = frame.timestamp_ms
-        line = json.dumps(_compact(frame, self._origin_ms), separators=(",", ":"))
+        line = json.dumps(compact_frame(frame, self._origin_ms), separators=(",", ":"))
         self._file.write(line + "\n")
         self.frames += 1
 
@@ -197,3 +199,23 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
         elif event.kind is EventKind.DISARMED:
             summary["disarmed"] += 1
     return summary
+
+
+def parse_expect(items: list[str]) -> dict[str, int | list[int]]:
+    """``["left_clicks=3", "scroll_up=3..20"]`` → ``{"left_clicks": 3, "scroll_up": [3, 20]}``"""
+    known = summarize_events(())
+    expect: dict[str, int | list[int]] = {}
+    for item in items:
+        key, sep, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or key not in known:
+            raise ValueError(f"--expect {item!r}: ใช้ได้เฉพาะ {', '.join(known)} ในรูป NAME=N")
+        try:
+            if ".." in value:
+                low, high = value.split("..", 1)
+                expect[key] = [int(low), int(high)]
+            else:
+                expect[key] = int(value)
+        except ValueError:
+            raise ValueError(f"--expect {item!r}: ค่าต้องเป็นจำนวนเต็มหรือช่วง A..B") from None
+    return expect

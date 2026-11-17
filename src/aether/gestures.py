@@ -321,6 +321,22 @@ class GestureEngine:
     def snapshot(self) -> EngineSnapshot:
         return self._snapshot
 
+    @property
+    def config(self) -> Config:
+        return self._cfg
+
+    def reconfigure(self, config: Config) -> None:
+        """ใช้ค่า config ใหม่ทันที (live tuning) โดยไม่ล้างสถานะของมือที่ตามอยู่
+
+        ค่าที่อ่านทุกเฟรม (pinch, swipe, cooldown, เวลาค้าง ฯลฯ) มีผลเฟรมถัดไป ส่วน One Euro filter
+        ถูกปรับค่าในตัว ไม่ล้างค่าที่กรองไว้ — จอ (screen) และ dominant hand เปลี่ยนแบบนี้ไม่ได้
+        """
+        self._cfg = config
+        self._reserved = reserved_gestures(config)
+        euro = config.pointer.one_euro
+        self._filter.set_params(euro.min_cutoff, euro.beta, euro.d_cutoff)
+        self._zoom_filter.set_params(euro.min_cutoff, euro.beta, euro.d_cutoff)
+
     def set_armed(self, armed: bool) -> list[GestureEvent]:
         """เปลี่ยนสถานะ ARM/DISARM คืน event ที่ต้องทำ (เช่นปล่อยปุ่มที่กดค้าง)"""
         if armed == self._armed:

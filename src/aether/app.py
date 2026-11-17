@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +35,9 @@ from .camera import CameraThread, FramePacket, FrameSource
 from .config import (
     Config,
     ConfigError,
+    app_root,
     assets_dir,
+    bundle_root,
     calibration_path,
     load_config,
     log_dir,
@@ -46,6 +49,7 @@ from .gestures import EventKind, GestureEngine, GestureEvent
 from .hotkeys import HotkeyManager, parse_hotkey
 from .hud.overlay import HudGroup, HudOverlay
 from .hud.theme import Theme
+from .incidents import FlightRecorder, SessionStats, incident_dir, write_incident
 from .logsetup import configure_logging, install_excepthooks
 from .mapping import (
     Desktop,
@@ -61,6 +65,7 @@ from .sound import SOUND_NAMES, SoundPlayer
 from .sources import CAMERA_SOURCE, NullTracker, SourceSpec, create_source
 from .tracker import HandTracker
 from .tray import Tray
+from .tuning import apply_overrides, current_values, save_overrides
 
 __all__ = ["AetherApp", "AppController", "Options", "run", "run_check"]
 
@@ -91,6 +96,7 @@ class AetherApp(QObject):
     """เป็นเจ้าของ pipeline, worker thread, hotkey, HUD และหน้าต่าง debug ของ config หนึ่งชุด"""
 
     gesture_events = Signal(object)  # tuple[GestureEvent, ...] ที่ไม่ใช่การขยับเคอร์เซอร์
+    incident_saved = Signal(object)  # Path ของไฟล์ incident ที่เขียนแล้ว (None = เขียนไม่ได้)
     armed_changed = Signal(bool)
     frame_packet = Signal(object)  # FramePacket ล่าสุด (UI thread) — ใช้ป้อน calibration wizard
     debug_visibility_changed = Signal(bool)
@@ -108,10 +114,16 @@ class AetherApp(QObject):
         hotkeys: HotkeyManager | None = None,
         quit_on_debug_close: bool = True,
         poses: PoseLibrary | None = None,
+        incident_directory: Callable[[], Path] | Path | None = None,
+        session_log: Path | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
+        self._base_config = config  # ค่าตอนเริ่ม/ที่บันทึกล่าสุด (live tuning ปรับทับค่านี้)
+        self._overrides: dict[str, float] = {}
+        self._incident_directory = incident_directory or incident_dir
+        self._session_log = session_log  # None = ไม่เขียนสถิติ session (เช่นใน test)
         self._poses = poses if poses is not None and config.poses.enabled else PoseLibrary()
         self._options = options
         self._tracker = tracker
@@ -133,23 +145,34 @@ class AetherApp(QObject):
                 else primary_screen_geometry()
             )
         self._screen = screen
+        self._double_click_ms = double_click_time_ms()
         self._engine = GestureEngine(
             config,
             screen,
-            double_click_ms=double_click_time_ms(),
+            double_click_ms=self._double_click_ms,
             poses=PoseClassifier(self._poses, config.poses.sensitivity),
         )
+        self._recorder = FlightRecorder()
+        self._stats = SessionStats(source=str(options.source), dry_run=self._dry_run)
         if self._poses.poses:
             log.info("ท่าที่สอนเอง: %s", ", ".join(f"{p.name} → {p.action}" for p in self._poses.poses))
         # event มาจาก worker/hotkey thread → ส่งต่อเป็น Qt signal เพื่อให้ไปถึง UI thread
         self._pipeline = Pipeline(
-            tracker.process, self._engine, self._executor, on_events=self.gesture_events.emit
+            tracker.process,
+            self._engine,
+            self._executor,
+            on_events=self.gesture_events.emit,
+            recorder=self._recorder,
         )
         self.gesture_events.connect(self._on_gesture_events)
+        self.incident_saved.connect(self._on_incident_saved)
         self.quit_requested.connect(QApplication.quit)
 
         self._thread = CameraThread(
-            source or create_source(options.source, config, screen), self._pipeline.process, self
+            source or create_source(options.source, config, screen),
+            self._pipeline.process,
+            self,
+            observer=self._observe_packet,
         )
         self._thread.frame_ready.connect(self._on_frame_ready)
         self._thread.camera_opened.connect(self._on_camera_opened)
@@ -162,6 +185,7 @@ class AetherApp(QObject):
             {
                 config.hotkeys.toggle_arm: self.toggle_armed,
                 config.hotkeys.quit: self.quit_requested.emit,
+                config.hotkeys.mark_incident: self.mark_incident,
             }
         )
 
@@ -222,7 +246,95 @@ class AetherApp(QObject):
     def dry_run(self) -> bool:
         return self._dry_run
 
+    @property
+    def stats(self) -> SessionStats:
+        return self._stats
+
+    @property
+    def recorder(self) -> FlightRecorder:
+        return self._recorder
+
     # ---- control -------------------------------------------------------- #
+
+    def mark_incident(self) -> bool:
+        """``Ctrl+Alt+M``: เขียน 5 วินาทีที่ผ่านมาลงไฟล์ (thread แยก — pointer ไม่สะดุด)
+
+        เรียกได้จาก thread ใดก็ได้ (ปกติคือ hotkey thread) ผลแจ้งผ่าน ``incident_saved``
+        """
+        frames = self._recorder.snapshot()
+        if not frames:
+            log.warning("ยังไม่มีเฟรมให้จด incident")
+            return False
+        config, screen, poses = self._config, self._screen, self._poses
+        directory = self._incident_directory
+
+        def write() -> None:
+            try:
+                target = directory() if callable(directory) else directory
+                path = write_incident(
+                    target,
+                    frames,
+                    config=config,
+                    screen=screen,
+                    double_click_ms=self._double_click_ms,
+                    poses=poses,
+                    source=str(self._options.source),
+                )
+            except Exception:
+                log.exception("เขียน incident ไม่ได้")
+                self.incident_saved.emit(None)
+                return
+            self.incident_saved.emit(path)
+
+        threading.Thread(target=write, name="incident-writer", daemon=True).start()
+        return True
+
+    def apply_tuning(self, overrides: dict[str, float]) -> bool:
+        """ใช้ค่าจากแผง live tuning ทันที (ค่าที่ขัดกันจะไม่ถูกใช้ และแจ้งในแผง)"""
+        try:
+            config = apply_overrides(self._base_config, overrides)
+        except (ConfigError, ValueError) as exc:
+            if self._debug_view is not None:
+                self._debug_view.tuning.show_status(str(exc), error=True)
+            return False
+        self._pipeline.reconfigure(config)
+        self._config = config
+        self._overrides = dict(overrides)
+        if self._debug_view is not None:
+            self._debug_view.set_config(config)
+        log.info("live tuning: %s", overrides or "(ค่าเดิม)")
+        return True
+
+    def save_tuning(self) -> list[Path]:
+        """บันทึกค่าที่ปรับไว้ลง config.toml (+ calibration.json ถ้ามีค่า pinch ที่ทับอยู่)"""
+        path = self._options.config_path or app_root() / "config.toml"
+        calibration = None if self._options.no_calibration else calibration_path()
+        panel = self._debug_view.tuning if self._debug_view is not None else None
+        try:
+            written = save_overrides(
+                path,
+                current_values(self._config) if self._overrides else {},
+                template=bundle_root() / "config.toml",
+                calibration=calibration,
+            )
+        except (OSError, ConfigError) as exc:
+            log.error("บันทึกค่าที่ปรับไม่ได้: %s", exc)
+            if panel is not None:
+                panel.show_status(f"บันทึกไม่ได้: {exc}", error=True)
+            return []
+        self._base_config = self._config
+        self._overrides = {}
+        log.info("บันทึกค่าที่ปรับลง %s", ", ".join(str(p) for p in written))
+        if panel is not None:
+            panel.set_values(current_values(self._config), base=True)
+            panel.show_status("บันทึกแล้ว: " + ", ".join(p.name for p in written))
+        return written
+
+    def reset_tuning(self) -> None:
+        self.apply_tuning({})
+        if self._debug_view is not None:
+            self._debug_view.tuning.set_values(current_values(self._base_config))
+            self._debug_view.tuning.show_status("กลับเป็นค่าเดิมแล้ว")
 
     def toggle_armed(self) -> bool:
         """สลับ ARM/DISARM (เรียกจาก thread ใดก็ได้ มีผลทันที)"""
@@ -275,6 +387,13 @@ class AetherApp(QObject):
             self._tracker.close()
         else:
             log.warning("camera thread did not stop in time; skipping tracker cleanup")
+        if self._session_log is not None:
+            try:
+                paints = self._hud.paint_count if self._hud is not None else None
+                path = self._stats.write(self._session_log, hud_paints=paints)
+                log.info("สถิติ session: %s", path)
+            except OSError as exc:
+                log.warning("เขียนสถิติ session ไม่ได้: %s", exc)
         if self._hud is not None:
             self._hud.stop()
             self._hud.deleteLater()
@@ -323,6 +442,9 @@ class AetherApp(QObject):
                 arm_hotkey=str(parse_hotkey(self._config.hotkeys.toggle_arm)),
             )
             view.closed.connect(self._on_debug_closed)
+            view.tuning.changed.connect(self.apply_tuning)
+            view.tuning.save_requested.connect(self.save_tuning)
+            view.tuning.reset_requested.connect(self.reset_tuning)
             self.armed_changed.connect(view.set_armed)
             view.set_armed(self._pipeline.armed)
             if self._camera_info:
@@ -365,6 +487,23 @@ class AetherApp(QObject):
                 log.info("gesture action: %s", event.name)
             else:
                 log.debug("event: %s", event)
+
+    def _observe_packet(self, packet: FramePacket) -> None:
+        """worker thread: สถิติของทุกเฟรม (ไม่ใช่แค่เฟรมที่ UI วาดทัน)"""
+        result = packet.result
+        self._stats.observe(
+            packet.captured_at, packet.process_ms, result.snapshot.state, result.events
+        )
+
+    def _on_incident_saved(self, path: Path | None) -> None:
+        if path is None:
+            if self._hud is not None:
+                self._hud.notify("INCIDENT FAILED", "error")
+            return
+        self._stats.note_incident()
+        log.info("จด incident แล้ว: %s", path)
+        if self._hud is not None:
+            self._hud.notify("INCIDENT SAVED")
 
     def _on_camera_opened(self, description: str) -> None:
         self._camera_info, self._camera_message = description, None
@@ -420,7 +559,12 @@ def _default_app_factory(
             model_path(), num_hands=config.tracking.num_hands, mirrored=config.camera.mirror
         )
     return AetherApp(
-        config, options, tracker, quit_on_debug_close=quit_on_debug_close, poses=poses
+        config,
+        options,
+        tracker,
+        quit_on_debug_close=quit_on_debug_close,
+        poses=poses,
+        session_log=log_dir(),
     )
 
 

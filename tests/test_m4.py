@@ -486,8 +486,10 @@ def test_unhandled_exceptions_go_to_the_log(clean_logging, tmp_path):
 # ---- --check และ CLI ------------------------------------------------------- #
 
 
-def test_check_passes_with_bundled_assets(capsys):
+def test_check_passes_with_bundled_assets(capsys, clean_logging, tmp_path, monkeypatch):
     from aether.config import model_path
+
+    monkeypatch.setattr(app_module, "log_dir", lambda: tmp_path)
 
     if not model_path().is_file():
         pytest.skip("ยังไม่ได้โหลดโมเดล")
@@ -496,13 +498,15 @@ def test_check_passes_with_bundled_assets(capsys):
     assert "โหลดโมเดลและประมวลผลเฟรมได้" in out and "พร้อมใช้งาน" in out
 
 
-def test_check_fails_without_model(capsys, tmp_path, monkeypatch):
+def test_check_fails_without_model(capsys, clean_logging, tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "model_path", lambda: tmp_path / "missing.task")
+    monkeypatch.setattr(app_module, "log_dir", lambda: tmp_path)
     assert run_check(Options(no_calibration=True)) == 2
     assert "ไม่พบโมเดล" in capsys.readouterr().err
 
 
-def test_check_reports_broken_config(capsys, tmp_path):
+def test_check_reports_broken_config(capsys, clean_logging, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "log_dir", lambda: tmp_path)
     bad = tmp_path / "bad.toml"
     bad.write_text("[pinch]\nonn = 1\n", encoding="utf-8")
     assert run_check(Options(config_path=bad)) == 2
