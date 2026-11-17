@@ -1,4 +1,4 @@
-"""System tray: Arm/Disarm, หน้าต่าง Debug, Calibrate, โหลด config ใหม่, ออก
+"""System tray: Arm/Disarm, หน้าต่าง Debug, Calibrate, สอนท่ามือ, โหลด config ใหม่, ออก
 
 ไอคอนวาดด้วย QPainter (ไม่มีไฟล์รูป): วงแหวนสีหลักเมื่อ ARMED สีเทาเมื่อ DISARMED
 """
@@ -52,6 +52,7 @@ class Tray(QObject):
     toggle_arm_requested = Signal()
     debug_requested = Signal(bool)
     calibrate_requested = Signal()
+    poses_requested = Signal()
     reload_requested = Signal()
     quit_requested = Signal()
 
@@ -68,6 +69,8 @@ class Tray(QObject):
         self._debug_action.toggled.connect(self.debug_requested)
         self._calibrate_action = QAction("Calibrate…", self._menu)
         self._calibrate_action.triggered.connect(self.calibrate_requested)
+        self._poses_action = QAction("สอนท่ามือ…", self._menu)
+        self._poses_action.triggered.connect(self.poses_requested)
         self._reload_action = QAction("โหลด config ใหม่", self._menu)
         self._reload_action.triggered.connect(self.reload_requested)
         self._quit_action = QAction("ออก", self._menu)
@@ -77,6 +80,7 @@ class Tray(QObject):
         self._menu.addSeparator()
         self._menu.addAction(self._debug_action)
         self._menu.addAction(self._calibrate_action)
+        self._menu.addAction(self._poses_action)
         self._menu.addAction(self._reload_action)
         self._menu.addSeparator()
         self._menu.addAction(self._quit_action)
@@ -102,6 +106,7 @@ class Tray(QObject):
             "arm": self._arm_action,
             "debug": self._debug_action,
             "calibrate": self._calibrate_action,
+            "poses": self._poses_action,
             "reload": self._reload_action,
             "quit": self._quit_action,
         }

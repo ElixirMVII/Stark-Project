@@ -26,6 +26,7 @@ from aether.config import Config, ConfigError, parse_config
 from aether.gestures import State
 from aether.hotkeys import HotkeyManager
 from aether.mapping import ScreenGeometry
+from aether.poses import PoseLibrary
 from aether.tray import Tray, make_icon
 
 FHD = ScreenGeometry(0, 0, 1920, 1080)
@@ -50,16 +51,19 @@ def test_tray_menu_actions_emit_signals(qapp):
     tray.toggle_arm_requested.connect(lambda: received.append("arm"))
     tray.debug_requested.connect(lambda on: received.append(f"debug:{on}"))
     tray.calibrate_requested.connect(lambda: received.append("calibrate"))
+    tray.poses_requested.connect(lambda: received.append("poses"))
     tray.reload_requested.connect(lambda: received.append("reload"))
     tray.quit_requested.connect(lambda: received.append("quit"))
 
     actions = tray.actions()
-    assert set(actions) == {"arm", "debug", "calibrate", "reload", "quit"}
-    for name in ("arm", "calibrate", "reload", "quit"):
+    assert set(actions) == {"arm", "debug", "calibrate", "poses", "reload", "quit"}
+    for name in ("arm", "calibrate", "poses", "reload", "quit"):
         actions[name].trigger()
     actions["debug"].trigger()  # checkable: ติ๊ก → True
     actions["debug"].trigger()  # เอาออก → False
-    assert received == ["arm", "calibrate", "reload", "quit", "debug:True", "debug:False"]
+    assert received == [
+        "arm", "calibrate", "poses", "reload", "quit", "debug:True", "debug:False"
+    ]  # fmt: skip
     assert [a.text() for a in tray.menu.actions() if not a.isSeparator()][-1] == "ออก"
 
 
@@ -198,8 +202,15 @@ class Factory:
         self.options: list[Options] = []
         self.trackers: list[ScriptedTracker] = []
         self.backends: list[RecordingBackend] = []
+        self.poses: list[PoseLibrary | None] = []
 
-    def __call__(self, config: Config, options: Options, quit_on_debug_close: bool) -> AetherApp:
+    def __call__(
+        self,
+        config: Config,
+        options: Options,
+        quit_on_debug_close: bool,
+        poses: PoseLibrary | None = None,
+    ) -> AetherApp:
         tracker, backend = ScriptedTracker(), RecordingBackend()
         app = AetherApp(
             config,
@@ -210,7 +221,9 @@ class Factory:
             screen=FHD,
             hotkeys=HotkeyManager({config.hotkeys.toggle_arm: lambda: None}, api=FakeApi()),
             quit_on_debug_close=quit_on_debug_close,
+            poses=poses,
         )
+        self.poses.append(poses)
         app.quit_requested.disconnect()
         self.apps.append(app)
         self.configs.append(config)
@@ -238,6 +251,7 @@ def controlled(qapp, tmp_path):
         app_factory=factory,
         config_loader=loader,
         calibration_file=tmp_path / "calibration.json",
+        poses_file=tmp_path / "poses.json",
         use_tray=True,
     )
     controller.start(loader())
@@ -353,6 +367,7 @@ def test_calibrate_option_opens_wizard_at_start(qapp, tmp_path):
         app_factory=factory,
         config_loader=loader,
         calibration_file=tmp_path / "calibration.json",
+        poses_file=tmp_path / "poses.json",
         use_tray=False,
     )
     controller.start(loader())

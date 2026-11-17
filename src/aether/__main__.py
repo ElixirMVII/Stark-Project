@@ -1,4 +1,4 @@
-"""CLI: ``python -m aether [--debug] [--dry-run] [--no-hud] [--config PATH] [--calibrate] [--check]``"""
+"""CLI: ``python -m aether [--debug] [--dry-run] [--no-hud] [--config PATH] [--calibrate] [--teach] [--check]``"""
 
 from __future__ import annotations
 
@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="เปิด calibration wizard ตอนเริ่ม (วัดระยะจีบ + พื้นที่เอื้อม แล้วบันทึก calibration.json)",
     )
     parser.add_argument(
+        "--teach",
+        action="store_true",
+        help="เปิดหน้าต่างสอนท่ามือตอนเริ่ม (สอนท่าใหม่ ผูกปุ่มลัด แล้วบันทึก poses.json)",
+    )
+    parser.add_argument(
         "--no-calibration",
         action="store_true",
         help="ไม่ใช้ค่าที่ calibrate ไว้ (ใช้ค่าใน config.toml อย่างเดียว)",
@@ -63,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path=args.config,
         calibrate=args.calibrate,
         no_calibration=args.no_calibration,
+        teach=args.teach,
     )
     return run_check(options) if args.check else run(options)
 

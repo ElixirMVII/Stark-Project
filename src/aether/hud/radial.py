@@ -12,6 +12,7 @@ from PySide6.QtGui import QPainter, QPainterPath
 
 from ..gestures import CHARGE_ARM, CHARGE_FIST, CHARGE_LAUNCH, EngineSnapshot, State
 from ..hotkeys import Hotkey, parse_action
+from ..poses import POSE_PREFIX
 from .theme import Theme, arc_path, draw_label, glow_stroke
 
 __all__ = ["DIRECTIONS", "ChargeRing", "Radial", "action_label"]
@@ -169,7 +170,7 @@ class Radial:
 
 
 class ChargeRing:
-    """วงแหวนที่ค่อยๆ เติมเต็มระหว่างค้างท่า ✊ (ย่อหน้าต่าง) หรือ 🤟 (สลับ ARM) + ป้ายบอกผล"""
+    """วงแหวนที่ค่อยๆ เติมเต็มระหว่างค้างท่า ✊ / 🤟 / 👍 / ท่าที่สอนเอง + ป้ายบอกผล"""
 
     def __init__(self, theme: Theme, actions: Mapping[str, str]) -> None:
         self._theme = theme
@@ -188,6 +189,8 @@ class ChargeRing:
             return "DISARM" if self._armed else "ARM"
         if self._kind == CHARGE_LAUNCH:
             return "APPS"
+        if self._kind is not None and self._kind.startswith(POSE_PREFIX):
+            return self._kind.removeprefix(POSE_PREFIX).upper()  # ชื่อท่าที่สอนเอง
         return self._fist_label
 
     def set_state(self, center: QPointF | None, snapshot: EngineSnapshot) -> bool:

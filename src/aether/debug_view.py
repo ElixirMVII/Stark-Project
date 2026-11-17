@@ -221,6 +221,10 @@ class DebugView(QWidget):
         state = [snapshot.state.value]
         if snapshot.gesture != GESTURE_NONE:
             state.append(snapshot.gesture)
+        if snapshot.pose is not None:  # ท่าที่สอนเองที่ใกล้ที่สุด: ระยะ/เกณฑ์ (ไว้ปรับ poses.sensitivity)
+            pose = snapshot.pose
+            verdict = "ok" if pose.accepted else pose.reason
+            state.append(f"pose {pose.name} {pose.distance:.2f}/{pose.threshold:.2f} {verdict}")
         if snapshot.pinch_ratio is not None:
             state.append(f"pinch {snapshot.pinch_ratio:4.2f}")
         if snapshot.charge_kind:

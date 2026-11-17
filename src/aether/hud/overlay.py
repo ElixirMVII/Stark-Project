@@ -23,6 +23,7 @@ from ..camera import FramePacket
 from ..config import Config, assets_dir
 from ..gestures import ACTION_LAUNCH_PREFIX, ACTION_LAUNCHER_OPEN, EventKind, GestureEvent
 from ..mapping import ScreenGeometry, physical_to_logical
+from ..poses import POSE_PREFIX
 from ..sound import SoundPlayer
 from .boot import BootSequence
 from .launcher import LauncherMenu
@@ -246,6 +247,11 @@ class HudOverlay(QWidget):
                         self._radial.flash(event.name.removeprefix("swipe_"), now)
                         self._refresh("radial")
                     self._play("swipe")
+                elif event.name.startswith(POSE_PREFIX):  # ท่าที่สอนเอง
+                    if here:
+                        point = self.to_logical(event.x, event.y)
+                        self._reticle.add_shockwave(point, theme.accent, now)
+                    self._play("click")
                 else:  # กำมือค้าง (ค่าเริ่มต้น: ย่อหน้าต่าง)
                     if here:
                         point = self.to_logical(event.x, event.y)

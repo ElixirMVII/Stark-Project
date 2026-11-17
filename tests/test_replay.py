@@ -175,6 +175,8 @@ def test_summarize_events():
         GestureEvent(EventKind.DISARMED),
         GestureEvent(EventKind.ACTION, name="launch_2"),
         GestureEvent(EventKind.ACTION, name="launcher_open"),  # แจ้ง HUD เท่านั้น ไม่นับ
+        GestureEvent(EventKind.ACTION, name="pose:rock"),
+        GestureEvent(EventKind.ACTION, name="pose:gun"),
     ]
     assert summarize_events(events) == {
         "left_clicks": 2,
@@ -197,6 +199,7 @@ def test_summarize_events():
         "launches": 1,
         "window_grabs": 0,
         "window_throws": 0,
+        "poses": 2,
     }
 
 

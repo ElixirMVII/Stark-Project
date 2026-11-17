@@ -20,6 +20,7 @@ from typing import IO, Any, Self
 from .config import Config
 from .gestures import EventKind, GestureEngine, GestureEvent
 from .mapping import ScreenGeometry
+from .poses import POSE_PREFIX, PoseClassifier
 from .tracker import HandFrame
 
 __all__ = [
@@ -117,13 +118,17 @@ def replay(
     screen: ScreenGeometry | None = None,
     *,
     armed: bool = True,
+    poses: PoseClassifier | None = None,
 ) -> Iterator[GestureEvent]:
     """ป้อนเฟรมเข้า gesture engine ตัวใหม่ แล้วคืน event ตามลำดับ (ไม่แตะ OS)
 
     ``armed`` คือสถานะตอนเริ่ม ตอนจบจะปล่อยปุ่มที่ยังกดค้าง (``BUTTON_UP``) ให้ แต่ไม่รายงาน
     การ arm/disarm ที่ตัว replay ทำเอง — event ``ARMED``/``DISARMED`` ที่ได้จึงมาจากท่ามือล้วนๆ
+    ``poses`` = ท่าที่สอนเองที่จะให้ engine รู้จัก (ไม่ระบุ = ไม่มี)
     """
-    engine = GestureEngine(config or Config(), screen or ScreenGeometry(0, 0, 1920, 1080))
+    engine = GestureEngine(
+        config or Config(), screen or ScreenGeometry(0, 0, 1920, 1080), poses=poses
+    )
     if armed:
         engine.set_armed(True)
     for frame in frames:
@@ -156,6 +161,7 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
         "launches": 0,  # เปิดรายการจากเมนูวงกลม
         "window_grabs": 0,  # ✊ หยิบหน้าต่าง
         "window_throws": 0,  # ปล่อยหน้าต่างขณะเคลื่อนเร็ว
+        "poses": 0,  # ท่าที่สอนเองติด (ทุกท่ารวมกัน)
     }
     for event in events:
         if event.kind is EventKind.CLICK:
@@ -178,6 +184,8 @@ def summarize_events(events: Iterable[GestureEvent]) -> dict[str, int]:
             key = "fist_holds" if event.name == "fist_hold" else event.name
             if event.name.startswith("launch_") and event.name.removeprefix("launch_").isdigit():
                 key = "launches"
+            elif event.name.startswith(POSE_PREFIX):
+                key = "poses"
             if key in summary:
                 summary[key] += 1
         elif event.kind is EventKind.WINDOW_GRAB:

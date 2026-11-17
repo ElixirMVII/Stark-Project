@@ -224,6 +224,47 @@ def test_second_hand_labelled_same_side_does_not_steal_cursor():
     assert driver.engine.snapshot.cursor == pytest.approx(before, abs=1)
 
 
+def test_label_flip_mid_drag_keeps_the_drag():
+    """โมเดลสลับ label ของมือที่ตามอยู่เป็น "left" นานเกิน 300ms: ยังลากต่อ ไม่ถือว่ามือหาย"""
+    driver = _dragging()
+    events = driver.animate(
+        lambda p: make_hand(0.5 + 0.1 * p, 0.4, pinch=PINCHED, side="left"), 600
+    )
+    assert of_kind(events, EventKind.BUTTON_UP) == []
+    assert driver.engine.state is State.DRAGGING
+    assert len(of_kind(events, EventKind.MOVE)) >= 5  # เคอร์เซอร์ยังตามมือ
+    driver.hold(make_hand(0.6, 0.4, pinch=OPEN), 100)
+    ups = of_kind(driver.events, EventKind.BUTTON_UP)
+    assert len(ups) == 1 and ups[0].reason == "release"
+
+
+def test_label_flip_with_both_hands_follows_the_tracked_hand():
+    driver = pointing(x=0.3)
+    before = driver.engine.snapshot.cursor
+    other = make_hand(0.75, 0.4, side="left")
+    driver.hold(make_hand(0.3, 0.4, side="left"), 400)  # ทั้งสองมือถูกเรียกว่า "left"
+    for _ in range(10):
+        driver.step(other, make_hand(0.3, 0.4, side="left"))
+    assert driver.engine.state is State.POINTER
+    assert driver.engine.snapshot.cursor == pytest.approx(before, abs=2)
+
+
+def test_other_hand_far_away_does_not_take_over_when_dominant_leaves():
+    driver = pointing(x=0.3)
+    driver.hold(make_hand(0.6, 0.4, side="left"), 600)  # มือข้างถนัดหาย มือซ้ายอยู่อีกที่
+    assert driver.engine.state is State.IDLE
+    assert not driver.engine.snapshot.hand_present
+    assert of_kind(driver.events, EventKind.MOVE) == []
+
+
+def test_label_flip_is_not_accepted_after_the_hand_was_lost():
+    driver = pointing(x=0.3)
+    driver.hold(None, 400)  # หายเกิน 300ms: ลืมตำแหน่งเดิมแล้ว
+    driver.clear()
+    driver.hold(make_hand(0.3, 0.4, side="left"), 300)
+    assert driver.events == [] and driver.engine.state is State.IDLE
+
+
 # ---- click -------------------------------------------------------------- #
 
 

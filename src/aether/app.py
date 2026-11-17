@@ -2,8 +2,8 @@
 
 - :class:`AetherApp` — หนึ่งชุดของการทำงานตาม config หนึ่งชุด: กล้อง → tracker → gesture engine →
   input ของ OS, HUD, หน้าต่าง debug, hotkey
-- :class:`AppController` — อยู่ตลอดอายุของ process: tray, calibration wizard, โหลด config ใหม่
-  (สร้าง :class:`AetherApp` ชุดใหม่แทนชุดเดิม)
+- :class:`AppController` — อยู่ตลอดอายุของ process: tray, calibration wizard, หน้าต่างสอนท่ามือ,
+  โหลด config ใหม่ (สร้าง :class:`AetherApp` ชุดใหม่แทนชุดเดิม)
 
 Thread ที่เกี่ยวข้อง:
 
@@ -39,6 +39,7 @@ from .config import (
     load_config,
     log_dir,
     model_path,
+    poses_path,
 )
 from .debug_view import DebugView
 from .gestures import EventKind, GestureEngine, GestureEvent
@@ -54,6 +55,8 @@ from .mapping import (
     primary_screen_geometry,
 )
 from .pipeline import Pipeline
+from .pose_wizard import PoseWizard
+from .poses import PoseClassifier, PoseFileError, PoseLibrary, load_poses
 from .sound import SOUND_NAMES, SoundPlayer
 from .tracker import HandTracker
 from .tray import Tray
@@ -79,6 +82,7 @@ class Options:
     config_path: Path | None = None
     calibrate: bool = False
     no_calibration: bool = False  # ไม่ใช้ค่าใน calibration.json
+    teach: bool = False  # เปิดหน้าต่างสอนท่ามือตอนเริ่ม
 
 
 class AetherApp(QObject):
@@ -101,10 +105,12 @@ class AetherApp(QObject):
         screen: ScreenArea | None = None,
         hotkeys: HotkeyManager | None = None,
         quit_on_debug_close: bool = True,
+        poses: PoseLibrary | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
+        self._poses = poses if poses is not None and config.poses.enabled else PoseLibrary()
         self._options = options
         self._tracker = tracker
         self._packet: FramePacket | None = None
@@ -114,9 +120,8 @@ class AetherApp(QObject):
             backend, self._dry_run = create_backend(options.dry_run)
         else:
             self._dry_run = options.dry_run
-        self._executor = ActionExecutor(
-            backend, dataclasses.asdict(config.actions), config.launcher.items
-        )
+        actions = {**dataclasses.asdict(config.actions), **self._poses.actions()}
+        self._executor = ActionExecutor(backend, actions, config.launcher.items)
         if screen is None:
             screen = (
                 Desktop(list_monitors())
@@ -124,7 +129,14 @@ class AetherApp(QObject):
                 else primary_screen_geometry()
             )
         self._screen = screen
-        self._engine = GestureEngine(config, screen, double_click_ms=double_click_time_ms())
+        self._engine = GestureEngine(
+            config,
+            screen,
+            double_click_ms=double_click_time_ms(),
+            poses=PoseClassifier(self._poses, config.poses.sensitivity),
+        )
+        if self._poses.poses:
+            log.info("ท่าที่สอนเอง: %s", ", ".join(f"{p.name} → {p.action}" for p in self._poses.poses))
         # event มาจาก worker/hotkey thread → ส่งต่อเป็น Qt signal เพื่อให้ไปถึง UI thread
         self._pipeline = Pipeline(
             tracker.process, self._engine, self._executor, on_events=self.gesture_events.emit
@@ -171,6 +183,11 @@ class AetherApp(QObject):
     @property
     def config(self) -> Config:
         return self._config
+
+    @property
+    def poses(self) -> PoseLibrary:
+        """ท่าที่สอนเองที่ชุดนี้ใช้อยู่"""
+        return self._poses
 
     @property
     def debug_view(self) -> DebugView | None:
@@ -385,18 +402,25 @@ class AetherApp(QObject):
         )
 
 
-AppFactory = Callable[[Config, Options, bool], AetherApp]
+AppFactory = Callable[[Config, Options, bool, PoseLibrary], AetherApp]
+Wizard = CalibrationWizard | PoseWizard
 
 
-def _default_app_factory(config: Config, options: Options, quit_on_debug_close: bool) -> AetherApp:
+def _default_app_factory(
+    config: Config, options: Options, quit_on_debug_close: bool, poses: PoseLibrary
+) -> AetherApp:
     tracker = HandTracker(
         model_path(), num_hands=config.tracking.num_hands, mirrored=config.camera.mirror
     )
-    return AetherApp(config, options, tracker, quit_on_debug_close=quit_on_debug_close)
+    return AetherApp(
+        config, options, tracker, quit_on_debug_close=quit_on_debug_close, poses=poses
+    )
 
 
 class AppController(QObject):
     """อยู่ตลอดอายุของ process: เป็นเจ้าของ tray, wizard และ :class:`AetherApp` ที่ทำงานอยู่
+
+    wizard (calibration หรือสอนท่ามือ) เปิดได้ทีละหน้าต่าง ระหว่างเปิดมือไม่คุมเมาส์ (DISARMED)
 
     โหลด config ใหม่ = ปิด :class:`AetherApp` ชุดเดิม (ปล่อยปุ่มเมาส์ก่อนเสมอ) แล้วสร้างชุดใหม่ซึ่ง
     เริ่มแบบ DISARMED — ถ้า config ใหม่ผิด ชุดเดิมทำงานต่อและแจ้งเตือนผ่าน tray
@@ -411,6 +435,7 @@ class AppController(QObject):
         app_factory: AppFactory | None = None,
         config_loader: Callable[[], Config] | None = None,
         calibration_file: Path | None = None,
+        poses_file: Path | None = None,
         use_tray: bool | None = None,
         parent: QObject | None = None,
     ) -> None:
@@ -421,8 +446,9 @@ class AppController(QObject):
             lambda: load_config(options.config_path, use_calibration=not options.no_calibration)
         )
         self._calibration_file = calibration_file or calibration_path()
+        self._poses_file = poses_file or poses_path()
         self._app: AetherApp | None = None
-        self._wizard: CalibrationWizard | None = None
+        self._wizard: Wizard | None = None
         self._debug_wanted = options.debug
 
         tray_ok = Tray.available() if use_tray is None else use_tray
@@ -431,6 +457,7 @@ class AppController(QObject):
             self._tray.toggle_arm_requested.connect(self._toggle_armed)
             self._tray.debug_requested.connect(self._set_debug)
             self._tray.calibrate_requested.connect(self.open_calibration)
+            self._tray.poses_requested.connect(self.open_poses)
             self._tray.reload_requested.connect(self.reload)
             self._tray.quit_requested.connect(QApplication.quit)
 
@@ -445,7 +472,8 @@ class AppController(QObject):
         return self._tray
 
     @property
-    def wizard(self) -> CalibrationWizard | None:
+    def wizard(self) -> Wizard | None:
+        """wizard ที่เปิดอยู่ (calibration หรือสอนท่ามือ)"""
         return self._wizard
 
     # ---- lifecycle ------------------------------------------------------ #
@@ -456,11 +484,13 @@ class AppController(QObject):
             self._tray.show()
         if self._options.calibrate:
             self.open_calibration()
+        elif self._options.teach:
+            self.open_poses()
 
     def shutdown(self) -> None:
         if self._wizard is not None:
             wizard, self._wizard = self._wizard, None
-            wizard.finished.disconnect(self._on_calibration_finished)
+            wizard.finished.disconnect(self._on_wizard_finished)
             wizard.close()
         if self._app is not None:
             self._app.shutdown()
@@ -491,24 +521,48 @@ class AppController(QObject):
 
     def open_calibration(self) -> None:
         """เปิด calibration wizard (มือหยุดคุมเมาส์ระหว่างนั้น)"""
-        if self._app is None:
-            return
-        if self._wizard is not None:
-            self._wizard.show()
-            self._wizard.raise_()
-            return
-        self._app.pipeline.set_armed(False)
-        wizard = CalibrationWizard(self._app.config, self._calibration_file)
-        wizard.finished.connect(self._on_calibration_finished)
-        self._wizard = wizard
-        wizard.show()
-        log.info("เปิด calibration wizard")
+        if self._app is not None and not self._raise_wizard():
+            self._open_wizard(CalibrationWizard(self._app.config, self._calibration_file))
+            log.info("เปิด calibration wizard")
+
+    def open_poses(self) -> None:
+        """เปิดหน้าต่างสอนท่ามือ (มือหยุดคุมเมาส์ระหว่างนั้น)"""
+        if self._app is not None and not self._raise_wizard():
+            app = self._app
+            self._open_wizard(PoseWizard(app.config, app.poses, self._poses_file))
+            log.info("เปิดหน้าต่างสอนท่ามือ")
+
+    def load_poses(self, config: Config) -> PoseLibrary:
+        """ท่าที่สอนไว้ใน ``poses.json`` — ไฟล์เสียจะแจ้งเตือนแล้วใช้งานต่อแบบไม่มีท่าที่สอนเอง"""
+        if not config.poses.enabled:
+            return PoseLibrary()
+        try:
+            return load_poses(self._poses_file)
+        except PoseFileError as exc:
+            log.error("อ่านท่าที่สอนไว้ไม่ได้ — ใช้งานต่อโดยไม่มีท่าเหล่านี้: %s", exc)
+            self._notify("ไฟล์ท่ามือเสีย", str(exc), error=True)
+            return PoseLibrary()
 
     # ---- internal ------------------------------------------------------- #
 
+    def _raise_wizard(self) -> bool:
+        """มี wizard เปิดอยู่แล้ว: ยกขึ้นมาให้เห็น (เปิดได้ทีละหน้าต่าง)"""
+        if self._wizard is None:
+            return False
+        self._wizard.show()
+        self._wizard.raise_()
+        return True
+
+    def _open_wizard(self, wizard: Wizard) -> None:
+        assert self._app is not None
+        self._app.pipeline.set_armed(False)
+        wizard.finished.connect(self._on_wizard_finished)
+        self._wizard = wizard
+        wizard.show()
+
     def _launch(self, config: Config, *, boot: bool) -> None:
         options = dataclasses.replace(self._options, debug=self._debug_wanted)
-        app = self._app_factory(config, options, self._tray is None)
+        app = self._app_factory(config, options, self._tray is None, self.load_poses(config))
         app.armed_changed.connect(self._on_armed_changed)
         app.debug_visibility_changed.connect(self._on_debug_visibility)
         app.frame_packet.connect(self._on_frame_packet)
@@ -535,7 +589,7 @@ class AppController(QObject):
 
     def _on_armed_changed(self, armed: bool) -> None:
         if armed and self._wizard is not None and self._app is not None:
-            log.info("กำลัง calibrate — ยังไม่เปิดการคุมเมาส์ด้วยมือ")
+            log.info("หน้าต่าง calibrate/สอนท่ายังเปิดอยู่ — ยังไม่เปิดการคุมเมาส์ด้วยมือ")
             self._app.pipeline.set_armed(False)
             return
         if self._tray is not None:
@@ -545,9 +599,9 @@ class AppController(QObject):
         if self._wizard is not None:
             self._wizard.show_frame(packet.result.hands)
 
-    def _on_calibration_finished(self, saved: bool) -> None:
+    def _on_wizard_finished(self, saved: bool) -> None:
         self._wizard = None
-        if saved:
+        if saved:  # calibration.json / poses.json เปลี่ยน → เริ่มชุดใหม่ให้ใช้ค่าใหม่
             self.reload()
 
     def _notify(self, title: str, message: str, *, error: bool = False) -> None:
@@ -627,6 +681,16 @@ def run_check(options: Options) -> int:
         lines.append(f"✓ ใช้ค่า calibrate จาก {calibration}")
     else:
         lines.append("· ยังไม่ได้ calibrate (ใช้ค่าใน config.toml)")
+    if config is not None and config.poses.enabled:
+        try:
+            names = load_poses(poses_path()).names()
+            lines.append(
+                f"✓ ท่าที่สอนเอง {len(names)} ท่า: {', '.join(names)}"
+                if names
+                else "· ยังไม่ได้สอนท่ามือเอง"
+            )
+        except PoseFileError as exc:  # ไม่ทำให้ใช้งานไม่ได้: แอปทำงานต่อโดยไม่มีท่าเหล่านี้
+            lines.append(f"! อ่านท่าที่สอนไว้ไม่ได้: {exc}")
     lines.append("ผลรวม: พร้อมใช้งาน" if ok else "ผลรวม: ยังใช้งานไม่ได้")
     for line in lines:
         log.info("check: %s", line)

@@ -10,7 +10,7 @@ Pure logic ล้วน — ไม่แตะ OS ไม่แตะเวลา
                                 │          ▼  │
                                 │        SCROLL (✌️)
                                 ├──► GESTURE (🖐) ──► ปัด 4 ทิศ → ACTION + cooldown
-                                ├──► CHARGING (✊/🤟/👍 ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM / เปิดเมนู
+                                ├──► CHARGING (✊/🤟/👍/ท่าที่สอนเอง ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM / เปิดเมนู
                                 │                                  └──► LAUNCHER ──(จีบ)──► launch_N
                                 │   ✊ แล้วขยับก่อนครบเวลา ──► WINDOW_DRAG ──(แบมือ)──► วาง / โยน
                                 └──► TWO_HAND_ZOOM (จีบสองมือพร้อมกัน) ──► ZOOM
@@ -36,11 +36,13 @@ from .config import Config
 from .filters import OneEuroFilter2D
 from .geometry import Finger, finger_curled, palm_center, pinch_ratio, pointer_anchor
 from .mapping import PointerTracker, ScreenArea, map_to_screen
+from .poses import POSE_PREFIX, PoseClassifier, PoseMatch
 from .tracker import GESTURE_NONE, LM, Hand, HandFrame
 
 __all__ = [
     "DEFAULT_DOUBLE_CLICK_MS",
     "DRAG_RELEASE_CONFIRM_MS",
+    "HANDEDNESS_FLIP_DIST",
     "LOST_RELEASE_MS",
     "MIN_PINCH_MS",
     "EngineSnapshot",
@@ -51,6 +53,7 @@ __all__ = [
     "State",
     "detect_swipe",
     "launcher_slice",
+    "reserved_gestures",
 ]
 
 LOST_RELEASE_MS = 300  # มือหายนานเท่านี้ถือว่าหลุด: ปล่อยปุ่มเมาส์ กลับ IDLE
@@ -65,6 +68,8 @@ ZOOM_SYNC_MS = 400  # สองมือต้องเริ่มจีบห�
 SWIPE_REST_MS = 150  # ต้องแบมือนิ่งนานเท่านี้ก่อน การปัดจึงจะนับ (กันการยกมือเข้าเฟรมถูกนับเป็นปัด)
 SWIPE_REST_DIST = (0.03, 0.04)  # "นิ่ง" = กลางฝ่ามือขยับไม่เกินนี้ (สัดส่วนของกว้าง, สูงเฟรม)
 REGION_MARGIN = 0.05  # ท่าพิเศษเริ่มได้เมื่อมืออยู่ใน active region (+ขอบเผื่อ) เท่านั้น
+# มือที่ label ไม่ตรงข้างถนัด แต่อยู่ห่างจุดที่มือเราเพิ่งอยู่ไม่เกินนี้ (normalized) = มือเดิมที่โมเดลสลับ label
+HANDEDNESS_FLIP_DIST = 0.08
 
 GESTURE_SCROLL = "Victory"
 GESTURE_PALM = "Open_Palm"
@@ -80,6 +85,7 @@ _CHARGE_GESTURE = {
     CHARGE_ARM: GESTURE_ARM,
     CHARGE_LAUNCH: GESTURE_LAUNCH,
 }
+# ท่าที่สอนเอง: ชนิดของการนับ = ชื่อท่า = ชื่อ action = "pose:<ชื่อ>" (ดู aether.poses)
 
 LAUNCH_DEADZONE = 0.06  # ต้องขยับมือห่างจากจุดเปิดเมนูเกินเท่านี้ (สัดส่วนของความกว้างเฟรม) จึงเลือกช่อง
 ACTION_LAUNCHER_OPEN = "launcher_open"  # แจ้ง HUD เท่านั้น
@@ -88,6 +94,22 @@ ACTION_LAUNCH_PREFIX = "launch_"  # launch_0 … launch_7 = เปิดรา�
 GRAB_START = 0.05  # ✊ ขยับเกินเท่านี้ (สัดส่วนของความกว้างเฟรม) ก่อนครบ fist_hold_ms = หยิบหน้าต่าง
 THROW_SPEED = 1800.0  # ปล่อยมือขณะหน้าต่างเคลื่อนเร็วกว่านี้ (physical px/s) = โยน
 THROW_SAMPLE_MS = 100  # วัดความเร็วตอนปล่อยจากช่วงเวลานี้
+
+
+def reserved_gestures(config: Config) -> frozenset[str]:
+    """ท่าสำเร็จรูปที่ engine ใช้ทำงานอยู่แล้ว — ท่าที่สอนเองทับท่าเหล่านี้ไม่ได้
+
+    (👍 สงวนไว้เฉพาะเมื่อเปิดเมนูเปิดแอปและมีรายการ)
+    """
+    reserved = {GESTURE_SCROLL, GESTURE_PALM, GESTURE_FIST, GESTURE_ARM}
+    if config.launcher.enabled and config.launcher.items:
+        reserved.add(GESTURE_LAUNCH)
+    return frozenset(reserved)
+
+
+def _charge_gesture(kind: str) -> str:
+    """ท่าที่ต้องค้างไว้ของการนับชนิด ``kind``"""
+    return _CHARGE_GESTURE.get(kind, kind)
 
 
 class State(enum.Enum):
@@ -114,7 +136,7 @@ class EventKind(enum.Enum):
     WINDOW_GRAB = "window_grab"  # หยิบหน้าต่างที่ (x, y)
     WINDOW_MOVE = "window_move"  # ขยับหน้าต่างที่ถืออยู่ (dx, dy) px
     WINDOW_RELEASE = "window_release"  # วาง — (dx, dy) = ความเร็วตอนโยน px/s (0, 0 = วางเฉยๆ)
-    ACTION = "action"  # ท่าครั้งเดียว: name = "swipe_left" | ... | "fist_hold"
+    ACTION = "action"  # ท่าครั้งเดียว: name = "swipe_left" | ... | "fist_hold" | "pose:<ชื่อ>"
     ARMED = "armed"  # แจ้งสถานะเท่านั้น ไม่ใช่ input ของ OS
     DISARMED = "disarmed"
 
@@ -128,6 +150,7 @@ class GestureEvent:
     - ``SCROLL``: ``dy > 0`` = เลื่อนขึ้น, ``dx > 0`` = เลื่อนขวา หน่วยเป็น notch ของล้อเมาส์
     - ``ZOOM``: ``dy`` notch ของ Ctrl+ล้อเมาส์ (``> 0`` = ซูมเข้า)
     - ``ACTION``: ``name`` คือ key ใน ``[actions]`` ของ config (เช่น ``swipe_left``, ``fist_hold``)
+      หรือ ``pose:<ชื่อ>`` ของท่าที่สอนเอง
     """
 
     kind: EventKind
@@ -155,10 +178,11 @@ class EngineSnapshot:
     pinch_level: float = 0.0  # 0 = นิ้วห่าง (≥ pinch.off) … 1 = จีบแล้ว (≤ pinch.on)
     pinch_button: str | None = None  # ปุ่มของการจีบที่กำลังเกิด
     hold_progress: float = 0.0  # 0→1 ระหว่างรอให้การจีบกลายเป็นการลาก
-    charge: float = 0.0  # 0→1 ระหว่างค้างท่า ✊ / 🤟
-    charge_kind: str | None = None  # "fist_hold" | "arm"
+    charge: float = 0.0  # 0→1 ระหว่างค้างท่า ✊ / 🤟 / 👍 / ท่าที่สอนเอง
+    charge_kind: str | None = None  # "fist_hold" | "arm" | "launcher" | "pose:<ชื่อ>"
     swipe_ready: bool = False  # อยู่ในโหมด GESTURE และพร้อมรับการปัด
     launcher_selection: int | None = None  # ช่องที่เลือกอยู่ในเมนู (state = LAUNCHER)
+    pose: PoseMatch | None = None  # ท่าที่สอนเองที่ใกล้มือที่สุดในเฟรมนี้ (ก่อน vote — ไว้ดูตอนปรับค่า)
 
 
 class GestureVoter:
@@ -204,6 +228,7 @@ class _Metrics:
     target: tuple[float, float]  # ตำแหน่งบนจอที่กรองแล้ว
     anchor: tuple[float, float]  # จุดคุมเคอร์เซอร์ (normalized)
     in_region: bool  # มืออยู่ใน active region (+ขอบเผื่อ)
+    pose: PoseMatch | None = None
 
 
 class GestureEngine:
@@ -215,9 +240,12 @@ class GestureEngine:
         screen: ScreenArea,
         *,
         double_click_ms: int = DEFAULT_DOUBLE_CLICK_MS,
+        poses: PoseClassifier | None = None,
     ) -> None:
         self._cfg = config
         self._screen = screen
+        self._poses = poses if poses else None  # library ว่าง = ไม่ต้องจำแนก
+        self._reserved = reserved_gestures(config)
         self._double_click_ms = double_click_ms
         self._double_click_radius = max(32.0, 0.03 * screen.height)
 
@@ -349,14 +377,24 @@ class GestureEngine:
     # ---- hand tracking -------------------------------------------------- #
 
     def _select_hand(self, frame: HandFrame) -> Hand | None:
-        """มือข้างถนัด ถ้าเจอข้างเดียวกันสองมือ เลือกมือที่อยู่ใกล้ตำแหน่งเดิม (ไม่ให้เคอร์เซอร์กระโดด)"""
+        """มือข้างถนัด ถ้าเจอข้างเดียวกันสองมือ เลือกมือที่อยู่ใกล้ตำแหน่งเดิม (ไม่ให้เคอร์เซอร์กระโดด)
+
+        ระหว่างที่ตามมืออยู่ โมเดลอาจสลับ label ซ้าย/ขวาไปชั่วครู่ (เจอบ่อยตอนเอียงหรือหันข้างมือ)
+        ถ้าไม่มีมือข้างถนัดในเฟรม แต่มีมือตรงจุดที่มือเราเพิ่งอยู่ ถือว่าเป็นมือเดิม — ไม่งั้นการลาก
+        จะหลุดเพราะ "มือหาย" ทั้งที่มือยังอยู่ (มือที่เพิ่งเข้าเฟรมยังต้องเป็นข้างถนัดเท่านั้น)
+        """
         side = self._cfg.tracking.dominant_hand
+        last = self._last_anchor
         candidates = [h for h in frame.hands if h.handedness == side]
         if not candidates:
+            if last is None or not frame.hands:
+                return None
+            nearest = min(frame.hands, key=lambda h: math.dist(pointer_anchor(h), last))
+            if math.dist(pointer_anchor(nearest), last) <= HANDEDNESS_FLIP_DIST:
+                return nearest
             return None
-        if len(candidates) == 1 or self._last_anchor is None:
+        if len(candidates) == 1 or last is None:
             return max(candidates, key=lambda h: h.handedness_score)
-        last = self._last_anchor
         return min(candidates, key=lambda h: math.dist(pointer_anchor(h), last))
 
     def _select_other(self, frame: HandFrame, hand: Hand | None) -> Hand | None:
@@ -399,8 +437,16 @@ class GestureEngine:
         anchor = pointer_anchor(hand)
         self._last_anchor = anchor
         mapped = map_to_screen(*anchor, self._cfg.pointer.active_region, self._screen)
+        gesture, score = hand.gesture, hand.gesture_score
+        pose = None
+        canned = score >= self._cfg.tracking.min_gesture_score and gesture in self._reserved
+        if self._poses is not None and not canned:
+            # ท่าที่สอนเองเข้า vote เหมือนท่าสำเร็จรูป (แต่ทับท่าที่ engine ใช้อยู่แล้วไม่ได้)
+            pose = self._poses.classify(hand, width, height)
+            if pose is not None and pose.accepted:
+                gesture, score = pose.label, 1.0
         return _Metrics(
-            gesture=self._voter.push(hand.gesture, hand.gesture_score),
+            gesture=self._voter.push(gesture, score),
             index_raw=index_raw,
             middle_raw=middle_raw,
             index=math.inf if index_curled else index_raw,
@@ -408,6 +454,7 @@ class GestureEngine:
             target=self._filter(*mapped, now / 1000.0),
             anchor=anchor,
             in_region=self._in_region(anchor),
+            pose=pose,
         )
 
     def _in_region(self, anchor: tuple[float, float]) -> bool:
@@ -523,6 +570,8 @@ class GestureEngine:
             self._scroll_last_output = now
             self._scroll_remainder = 0.0
             return
+        pinch = self._cfg.pinch
+        near_pinch = min(m.index, m.middle) < pinch.on * PINCH_LOCK_FACTOR
         if m.in_region:
             if m.gesture == GESTURE_PALM:
                 self._state = State.GESTURE
@@ -531,15 +580,15 @@ class GestureEngine:
                 self._palm_lost_since = None
                 return
             kind = self._charge_kind_for(m.gesture)
-            if kind is not None and self._hold_block != m.gesture:
+            # ท่าที่สอนเองไม่เริ่มนับระหว่างนิ้วใกล้จีบ: การคลิกต้องมาก่อนเสมอ
+            pose_blocked = kind is not None and kind.startswith(POSE_PREFIX) and near_pinch
+            if kind is not None and self._hold_block != m.gesture and not pose_blocked:
                 self._state = State.CHARGING
                 self._charge_kind = kind
                 self._charge_t0 = now
                 self._charge_anchor = m.anchor
                 return
 
-        pinch = self._cfg.pinch
-        near_pinch = min(m.index, m.middle) < pinch.on * PINCH_LOCK_FACTOR
         self._move(m.target, self._cfg.pointer.pinch_lock_gain if near_pinch else 1.0, events)
         self._begin_pinch(m, now)
 
@@ -667,6 +716,8 @@ class GestureEngine:
 
     def _charge_kind_for(self, gesture: str) -> str | None:
         """ท่าที่ต้องค้างเพื่อให้ติด → ชนิดของการนับ (👍 นับเฉพาะเมื่อเปิด launcher และมีรายการ)"""
+        if gesture.startswith(POSE_PREFIX):
+            return gesture
         if gesture == GESTURE_FIST:
             return CHARGE_FIST
         if gesture == GESTURE_ARM:
@@ -679,6 +730,8 @@ class GestureEngine:
         cfg = self._cfg.gestures
         if kind == CHARGE_LAUNCH:
             return self._cfg.launcher.hold_ms
+        if kind.startswith(POSE_PREFIX):
+            return self._cfg.poses.hold_ms
         return cfg.arm_hold_ms if kind == CHARGE_ARM else cfg.fist_hold_ms
 
     def _block_hold(self, gesture: str, now: int) -> None:
@@ -691,7 +744,7 @@ class GestureEngine:
         self, hand: Hand, m: _Metrics, frame: HandFrame, now: int, events: list[GestureEvent]
     ) -> None:
         kind = self._charge_kind
-        if kind is None or m.gesture != _CHARGE_GESTURE[kind]:
+        if kind is None or m.gesture != _charge_gesture(kind):
             self._charge_kind = None
             self._resume_pointer(m)
             return
@@ -703,14 +756,14 @@ class GestureEngine:
                 return
         if now - self._charge_t0 < self._charge_duration(kind):
             return
-        self._block_hold(_CHARGE_GESTURE[kind], now)
+        self._block_hold(_charge_gesture(kind), now)
         if kind == CHARGE_ARM:
             events.extend(self.set_armed(False))  # 🤟 ค้างขณะ ARMED = disarm
         elif kind == CHARGE_LAUNCH:
             self._open_launcher(hand, now, events)
-        else:
+        else:  # ✊ ค้าง หรือท่าที่สอนเอง: ชื่อ action = ชนิดของการนับ
             x, y = self._cursor_or_origin()
-            events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=CHARGE_FIST))
+            events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=kind))
             self._resume_pointer(m)
 
     def _charge_while_disarmed(self, m: _Metrics, now: int, events: list[GestureEvent]) -> None:
@@ -970,6 +1023,7 @@ class GestureEngine:
             launcher_selection=(
                 self._launcher_selection if self._state is State.LAUNCHER else None
             ),
+            pose=m.pose if m is not None else None,
         )
 
 

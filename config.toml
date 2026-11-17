@@ -74,3 +74,10 @@ items = [
   { label = "Notepad", run = "notepad.exe" },
   { label = "Calc",    run = "calc.exe" },
 ]
+
+[poses]
+# ท่าที่สอนเอง: tray → "สอนท่ามือ…" (เก็บใน poses.json ข้างตัวแอป — มีแค่ตัวเลข landmark ไม่มีภาพ)
+# ค้างท่าที่สอนไว้ hold_ms แล้วจะกดปุ่มลัดที่ผูกไว้ตอนสอน
+enabled = true
+hold_ms = 600
+sensitivity = 1.0   # > 1 = รับท่าง่ายขึ้น (อาจติดเองบ่อยขึ้น), < 1 = เข้มขึ้น · ช่วง 0.25–4.0

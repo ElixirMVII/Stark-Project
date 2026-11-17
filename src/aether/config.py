@@ -34,6 +34,7 @@ __all__ = [
     "Palette",
     "PinchConfig",
     "PointerConfig",
+    "PosesConfig",
     "ScrollConfig",
     "TrackingConfig",
     "app_root",
@@ -46,12 +47,14 @@ __all__ = [
     "log_dir",
     "model_path",
     "parse_config",
+    "poses_path",
     "read_calibration",
 ]
 
 GESTURE_MODEL_FILENAME = "gesture_recognizer.task"
 CALIBRATION_FILENAME = "calibration.json"
 CALIBRATION_VERSION = 1
+POSES_FILENAME = "poses.json"
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 
@@ -311,6 +314,21 @@ class LauncherConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PosesConfig:
+    """ท่าที่ผู้ใช้สอนเอง (เก็บใน ``poses.json`` — สอน/ลบผ่านเมนู tray "สอนท่ามือ…")"""
+
+    enabled: bool = True
+    hold_ms: int = 600  # ค้างท่าที่สอนไว้นานเท่านี้จึงทำงาน
+    sensitivity: float = 1.0  # > 1 = รับท่าง่ายขึ้น (อาจติดเองบ่อยขึ้น), < 1 = เข้มขึ้น
+
+    def __post_init__(self) -> None:
+        _require(self.hold_ms > 0, "poses.hold_ms ต้อง > 0")
+        _require(
+            0.25 <= self.sensitivity <= 4.0, "poses.sensitivity ต้องอยู่ในช่วง 0.25–4.0"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
@@ -322,6 +340,7 @@ class Config:
     hotkeys: HotkeysConfig = field(default_factory=HotkeysConfig)
     hud: HudConfig = field(default_factory=HudConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
+    poses: PosesConfig = field(default_factory=PosesConfig)
 
 
 # --------------------------------------------------------------------------- #
@@ -416,7 +435,7 @@ def _repo_root() -> Path | None:
 
 
 def app_root() -> Path:
-    """โฟลเดอร์ของไฟล์ที่ผู้ใช้แก้ได้: ``config.toml``, ``calibration.json``, ``logs/``
+    """โฟลเดอร์ของไฟล์ที่ผู้ใช้แก้ได้: ``config.toml``, ``calibration.json``, ``poses.json``, ``logs/``
 
     - รันจาก source (``pip install -e .``): root ของ repo
     - build ด้วย PyInstaller: โฟลเดอร์ที่มีไฟล์ exe
@@ -455,6 +474,10 @@ def default_config_path() -> Path:
 
 def calibration_path() -> Path:
     return app_root() / CALIBRATION_FILENAME
+
+
+def poses_path() -> Path:
+    return app_root() / POSES_FILENAME
 
 
 def log_dir() -> Path:

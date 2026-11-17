@@ -25,7 +25,7 @@ from .calibration import CalibrationSession, save_calibration
 from .config import Config
 from .tracker import Hand, HandFrame, hand_connections
 
-__all__ = ["CalibrationWizard"]
+__all__ = ["CalibrationWizard", "HandPreview"]
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ _DIM = QColor("#7A8B99")
 _WARN = "#FFB300"
 
 
-class _HandPreview(QWidget):
+class HandPreview(QWidget):
     """โครงมือ 21 จุดของมือข้างถนัด (ซูมให้เต็มกรอบ) — ให้ผู้ใช้เห็นว่ากล้องจับมือได้"""
 
     def __init__(self, color: QColor, parent: QWidget | None = None) -> None:
@@ -104,7 +104,7 @@ class CalibrationWizard(QWidget):
         self._title.setFont(title_font)
         self._instruction = QLabel()
         self._instruction.setWordWrap(True)
-        self._preview = _HandPreview(QColor(config.hud.palette.primary))
+        self._preview = HandPreview(QColor(config.hud.palette.primary))
         self._status = QLabel()
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
