@@ -432,3 +432,29 @@ spec ระบุ "เทรนท่าเองด้วย MediaPipe Model Ma
   ก่อนเขียนจริง; ถ้า calibration.json มีค่า pinch (ซึ่งทับ config.toml) จะอัปเดตในนั้นด้วย
 - test ของ `--check` เดิมทิ้ง handler ของ logging ไว้กับ stderr ที่ pytest ปิดไปแล้ว — แก้ให้ใช้ fixture
   `clean_logging` และเขียน log ลงโฟลเดอร์ชั่วคราว
+
+### D44 · M6 Target Lock + Magnetic Snap
+- dependency ใหม่ `uiautomation` (spec v1.1 อนุญาต) ใส่ marker `sys_platform == 'win32'` — บนเครื่องอื่นไม่ติดตั้ง
+  และ Target Lock ปิดตัวเองพร้อม log (แอปทำงานต่อได้) · `--check` มีบรรทัดตรวจ UIA และ CI ตรวจว่า exe ที่ build มี UIA ใช้ได้
+- **import `uiautomation` ใน thread ของ finder เท่านั้น** เพราะตอน import มันเรียก `SetProcessDpiAwareness(PerMonitor)`
+  ถ้า import ก่อน Qt สร้าง QApplication จะได้ DPI awareness แบบ v1 แทน PerMonitorV2 ของ Qt
+- `TargetResolver` (pure, test ด้วย backend ปลอม) แยกจาก `UiaBackend` (เรียก UIA จริง) — กติกาของ spec ทั้งหมด
+  (ไล่ ancestor 3 ชั้น, กรองชนิด/enabled/offscreen/ขนาด, cache ตามสี่เหลี่ยม 0.4 วินาที, call > 150 ms = พักโปรแกรมนั้น
+  5 วินาที, เต็มจอที่ไม่ใช่ explorer, blocklist) อยู่ใน resolver; เพิ่ม `IsHungAppWindow` ก่อนถาม เพื่อไม่ต้อง
+  รอ timeout ของ UIA กับโปรแกรมที่ค้างอยู่แล้ว (thread ของ finder ยังค้างได้ถ้า call ช้าจริง แต่ pointer ไม่สะดุด)
+- finder ถามจาก **ตำแหน่งก่อน snap** (`EngineSnapshot.pointer`) ไม่ใช่ตำแหน่งที่ดูดแล้ว ไม่งั้นเป้าจะ "ดูดตัวเอง"
+  ทำงานเฉพาะตอน ARMED; ผลส่งให้ engine ผ่าน `Pipeline.set_target` (lock เดียวกับ engine)
+- snap ทำใน engine (`MagneticSnap` ใน `snap.py` เป็น pure function + state) เป็น "ระยะดึง" ที่บวกกับตำแหน่ง
+  ของ PointerTracker ไม่สะสมเข้าไป — คลิก/จีบใช้ตำแหน่งที่ดูดแล้ว; ตอนออกจาก POINTER/PINCH_PENDING
+  (เช่นเริ่มลาก) ระยะดึงถูกรวมเข้าตำแหน่งจริง เคอร์เซอร์ไม่กระโดดกลับ; ตอนหลุด (ความเร็ว/เปลี่ยนเป้า/ไม่มีเป้า)
+  ระยะดึงคลายแบบ exponential ~60 ms แทนการหายทันที; sticky ตอน pinch-lock = gain < 1 (นิ้วใกล้จีบ/จีบรอ)
+- `escape_speed` ใน config เป็น "ความกว้างจอต่อวินาที" ตาม spec engine แปลงเป็น px/s ด้วยความกว้างของพื้นที่จอ;
+  ความเร็วมือเป็น EMA ของความเร็วก่อน snap (กัน noise เฟรมเดียว)
+- **คำถามของ spec: ControlFromPoint ทะลุ overlay ไหม** — HUD ตั้ง `WS_EX_TRANSPARENT | WS_EX_LAYERED` ซึ่ง hit-test ของ
+  Win32 ข้ามไป `tests/test_windows.py::test_uia_sees_through_the_click_through_overlay` สร้างหน้าต่าง native ที่มี
+  ex-style เดียวกับ overlay ทับปุ่มจริง แล้วตรวจว่า UIA ยังเจอปุ่ม (รันบน windows-latest ใน CI — ผลดูได้ใน CI)
+  ถ้า element ที่ได้เป็นของ process เราเอง resolver จะไม่ล็อก (กันไว้อีกชั้น)
+- HUD: `hud/target_lock.py` ใช้ `SecondOrderDynamics` preset `bouncy` (สร้าง `hud/anim.py` ของ M7 มาก่อนเพื่อใช้ที่นี่)
+- Privacy: ชื่อ element อยู่ใน `Target.name` ใช้แสดงบน HUD เท่านั้น — flight recorder เก็บแค่ HandFrame/state/event
+  (ไม่มี snapshot) และ log/debug ใช้ `Target.describe()` (ชนิด + ขนาด)
+- ยังไม่ได้วัดจริง: อัตราติดของปุ่ม X/taskbar (เกณฑ์ 9/10), p95 latency ที่เพิ่ม, CPU ของ Chrome ตอนเปิด targeting

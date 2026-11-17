@@ -46,6 +46,9 @@ binaries = collect_dynamic_libs("mediapipe")
 
 if sys.platform == "win32":
     pynput_backends = ["pynput._util.win32", "pynput.keyboard._win32", "pynput.mouse._win32"]
+    # Target Lock: uiautomation (+ DLL ใน uiautomation/bin) และ comtypes ที่มัน import ตอนใช้งาน
+    pynput_backends += ["uiautomation", "comtypes", "comtypes.client"]
+    binaries += collect_dynamic_libs("uiautomation")
 else:
     pynput_backends = ["pynput._util.xorg", "pynput.keyboard._xorg", "pynput.mouse._xorg"]
 

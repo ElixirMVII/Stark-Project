@@ -16,6 +16,8 @@ dependencies = [
     "PySide6>=6.7",
     "pynput>=1.7",
     "psutil>=5.9",
+    # Target Lock (v1.1 M6): Windows UI Automation — spec v1.1 อนุญาตไว้แล้ว (ดึง comtypes มาด้วย)
+    "uiautomation>=2.0.20; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

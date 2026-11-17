@@ -36,6 +36,7 @@ __all__ = [
     "PointerConfig",
     "PosesConfig",
     "ScrollConfig",
+    "TargetingConfig",
     "TrackingConfig",
     "app_root",
     "apply_calibration",
@@ -324,8 +325,28 @@ class PosesConfig:
 
     def __post_init__(self) -> None:
         _require(self.hold_ms > 0, "poses.hold_ms ต้อง > 0")
+        _require(0.25 <= self.sensitivity <= 4.0, "poses.sensitivity ต้องอยู่ในช่วง 0.25–4.0")
+
+
+@dataclass(frozen=True, slots=True)
+class TargetingConfig:
+    """Target Lock + Magnetic Snap (Windows UI Automation) — spec v1.1 M6"""
+
+    enabled: bool = True
+    rate_hz: int = 15  # ถามหาปุ่มใต้เคอร์เซอร์กี่ครั้งต่อวินาที (+ ทุกครั้งที่เคอร์เซอร์ขยับเกิน 8px)
+    snap_strength: float = 0.6  # แรงดูดเข้าหากลางปุ่ม (0 = ไม่ดูด แค่แสดงกรอบ)
+    escape_speed: float = 2.5  # ขยับมือเร็วกว่านี้ (ความกว้างจอต่อวินาที) = หลุดจากแรงดูด
+    max_size: tuple[int, int] = (480, 160)  # logical px: ปุ่มใหญ่กว่านี้ไม่ดูด (เช่นพื้นที่ข้อความ)
+    show_label: bool = True  # ป้ายชนิด · ชื่อปุ่มบน HUD
+    app_blocklist: tuple[str, ...] = ()  # ชื่อโปรแกรมที่ไม่ต้องหาเป้า เช่น ("game.exe",)
+
+    def __post_init__(self) -> None:
+        _require(1 <= self.rate_hz <= 60, "targeting.rate_hz ต้องอยู่ในช่วง 1–60")
+        _require(0.0 <= self.snap_strength <= 1.0, "targeting.snap_strength ต้องอยู่ในช่วง 0–1")
+        _require(self.escape_speed > 0, "targeting.escape_speed ต้อง > 0")
         _require(
-            0.25 <= self.sensitivity <= 4.0, "poses.sensitivity ต้องอยู่ในช่วง 0.25–4.0"
+            self.max_size[0] >= 8 and self.max_size[1] >= 8,
+            "targeting.max_size ต้องเป็น [กว้าง, สูง] อย่างน้อย 8 px",
         )
 
 
@@ -342,6 +363,7 @@ class Config:
     hud: HudConfig = field(default_factory=HudConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
     poses: PosesConfig = field(default_factory=PosesConfig)
+    targeting: TargetingConfig = field(default_factory=TargetingConfig)
 
 
 # --------------------------------------------------------------------------- #

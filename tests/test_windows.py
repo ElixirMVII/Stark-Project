@@ -296,3 +296,133 @@ def test_desktop_is_never_grabbed():
         pytest.skip("ไม่มี shell window ใน session นี้")
     grabbed = win32_grab_window(-30000, -30000)  # นอกทุกจอ → ไม่มีหน้าต่าง
     assert grabbed is None
+
+
+# ---- M6: UI Automation (Target Lock) ------------------------------------ #
+
+WS_POPUP, WS_VISIBLE = 0x80000000, 0x10000000
+# flag ที่ Qt ตั้งให้ overlay ของ HUD (WindowTransparentForInput | Tool | StaysOnTop | DoesNotAcceptFocus)
+OVERLAY_EX_STYLE = 0x00080000 | 0x00000020 | 0x00000008 | 0x00000080 | 0x08000000
+
+
+def _window(user32, ex_style: int, cls: str, title: str, style: int, x, y, w, h):
+    user32.CreateWindowExW.argtypes = (
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+    )  # fmt: skip
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = (
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.UINT,
+    )  # fmt: skip
+    hwnd = user32.CreateWindowExW(ex_style, cls, title, style, x, y, w, h, None, None, None, None)
+    if hwnd:
+        user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+    return hwnd
+
+
+def _pump(seconds: float = 0.2) -> None:
+    """ให้หน้าต่างของ thread นี้ได้ประมวลผล message (วาด/ตอบ WM_GETOBJECT) ก่อนถาม UIA"""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    msg = wintypes.MSG()
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        time.sleep(0.01)
+
+
+@pytest.fixture
+def native_button():
+    from aether.actions import win32_root_window_at
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.DestroyWindow.argtypes = (wintypes.HWND,)
+    hwnd = _window(user32, 0, "BUTTON", "AETHER target", WS_POPUP | WS_VISIBLE, 300, 300, 120, 40)
+    if not hwnd:
+        pytest.skip(f"สร้างปุ่มทดสอบไม่ได้ (error {ctypes.get_last_error()})")
+    _pump()
+    center = (360, 320)
+    if win32_root_window_at(*center) != hwnd:
+        user32.DestroyWindow(hwnd)
+        pytest.skip("หน้าต่างอื่นบังปุ่มทดสอบอยู่ใน session นี้")
+    yield user32, hwnd, center
+    user32.DestroyWindow(hwnd)
+
+
+def test_uia_finds_the_button_under_the_point(native_button):
+    import os
+
+    from aether.config import TargetingConfig
+    from aether.targeting import TargetResolver, UiaBackend
+
+    _user32, _hwnd, center = native_button
+    backend = UiaBackend()
+    try:
+        chain = backend.element_chain(*center, 3)
+        button = next((e for e in chain if e.control_type == "ButtonControl"), None)
+        assert button is not None, [e.control_type for e in chain]
+        assert button.process_id == os.getpid() and button.enabled and not button.offscreen
+        left, top, right, bottom = button.rect
+        assert left <= center[0] < right and top <= center[1] < bottom
+        # resolver: กติกาเดียวกับตอนใช้งานจริง (own_pid ปลอม เพราะปุ่มนี้เป็นของ process test เอง)
+        target = TargetResolver(backend, TargetingConfig(), own_pid=-1).resolve(*center)
+        assert target is not None and target.control_type == "Button"
+        assert (
+            TargetResolver(backend, TargetingConfig()).resolve(*center) is None
+        )  # ของตัวเอง: ไม่ล็อก
+    finally:
+        backend.close()
+
+
+def test_uia_sees_through_the_click_through_overlay(native_button):
+    """spec M6.1: ControlFromPoint ทะลุ overlay ของ HUD (WS_EX_TRANSPARENT | WS_EX_LAYERED) หรือไม่"""
+    from aether.actions import win32_root_window_at
+    from aether.targeting import UiaBackend
+
+    user32, button, center = native_button
+    user32.SetLayeredWindowAttributes.argtypes = (
+        wintypes.HWND, wintypes.DWORD, ctypes.c_ubyte, wintypes.DWORD,
+    )  # fmt: skip
+    overlay = _window(
+        user32,
+        OVERLAY_EX_STYLE,
+        "STATIC",
+        "AETHER overlay",
+        WS_POPUP | WS_VISIBLE,
+        250,
+        250,
+        300,
+        200,
+    )
+    if not overlay:
+        pytest.skip(f"สร้าง overlay ทดสอบไม่ได้ (error {ctypes.get_last_error()})")
+    try:
+        user32.SetLayeredWindowAttributes(overlay, 0, 128, 0x2)  # LWA_ALPHA: มองเห็นครึ่งหนึ่ง
+        _pump()
+        assert win32_root_window_at(*center) == button  # hit-test ของ Win32 ทะลุ overlay
+        backend = UiaBackend()
+        try:
+            chain = backend.element_chain(*center, 3)
+        finally:
+            backend.close()
+        types = [e.control_type for e in chain]
+        assert "ButtonControl" in types, f"UIA ไม่ทะลุ overlay: {types}"
+    finally:
+        user32.DestroyWindow(overlay)
+
+
+def test_foreground_and_window_info_are_read(native_button):
+    from aether.targeting import UiaBackend
+
+    _user32, _hwnd, center = native_button
+    backend = UiaBackend()
+    try:
+        window = backend.window_at(*center)
+        assert window is not None and window.exe.lower().startswith("python") and not window.hung
+        foreground = backend.foreground()
+        assert foreground is None or isinstance(foreground.fullscreen, bool)
+    finally:
+        backend.close()

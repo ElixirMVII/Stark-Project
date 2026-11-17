@@ -295,6 +295,8 @@ class DebugView(QWidget):
             state.append("slice —" if selection is None else f"slice {selection}")
         if snapshot.cursor is not None:
             state.append(f"cursor ({snapshot.cursor[0]}, {snapshot.cursor[1]})")
+        if snapshot.target is not None:  # ชนิด + ขนาดเท่านั้น (ชื่อปุ่มอาจเป็นข้อมูลส่วนตัว)
+            state.append(f"lock {snapshot.target.describe()}")
         line3 = " · ".join(state)
 
         painter.setFont(self._mono)

@@ -63,6 +63,7 @@ from .pose_wizard import PoseWizard
 from .poses import PoseClassifier, PoseFileError, PoseLibrary, load_poses
 from .sound import SOUND_NAMES, SoundPlayer
 from .sources import CAMERA_SOURCE, NullTracker, SourceSpec, create_source
+from .targeting import TargetFinder
 from .tracker import HandTracker
 from .tray import Tray
 from .tuning import apply_overrides, current_values, save_overrides
@@ -116,6 +117,7 @@ class AetherApp(QObject):
         poses: PoseLibrary | None = None,
         incident_directory: Callable[[], Path] | Path | None = None,
         session_log: Path | None = None,
+        targeting_backend: Callable[[], object] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -155,7 +157,9 @@ class AetherApp(QObject):
         self._recorder = FlightRecorder()
         self._stats = SessionStats(source=str(options.source), dry_run=self._dry_run)
         if self._poses.poses:
-            log.info("ท่าที่สอนเอง: %s", ", ".join(f"{p.name} → {p.action}" for p in self._poses.poses))
+            log.info(
+                "ท่าที่สอนเอง: %s", ", ".join(f"{p.name} → {p.action}" for p in self._poses.poses)
+            )
         # event มาจาก worker/hotkey thread → ส่งต่อเป็น Qt signal เพื่อให้ไปถึง UI thread
         self._pipeline = Pipeline(
             tracker.process,
@@ -180,6 +184,19 @@ class AetherApp(QObject):
         self._thread.failed.connect(self._on_failed)
         self._camera_info = ""
         self._camera_message: str | None = None
+
+        # M6 Target Lock: thread แยกที่ถาม UI Automation (Windows) — ปิดได้ด้วย targeting.enabled
+        self._finder: TargetFinder | None = None
+        if config.targeting.enabled and (targeting_backend is not None or sys.platform == "win32"):
+            screen_info = QGuiApplication.primaryScreen()
+            self._finder = TargetFinder(
+                config.targeting,
+                position=lambda: self._pipeline.snapshot.pointer,
+                publish=self._pipeline.set_target,
+                active=lambda: self._pipeline.armed,
+                backend_factory=targeting_backend,
+                scale=screen_info.devicePixelRatio() if screen_info is not None else 1.0,
+            )
 
         self._hotkeys = hotkeys or HotkeyManager(
             {
@@ -245,6 +262,10 @@ class AetherApp(QObject):
     @property
     def dry_run(self) -> bool:
         return self._dry_run
+
+    @property
+    def finder(self) -> TargetFinder | None:
+        return self._finder
 
     @property
     def stats(self) -> SessionStats:
@@ -376,12 +397,16 @@ class AetherApp(QObject):
             self._stats_timer.start()  # ไม่มีอะไรแสดงผล: log สถานะลง console แทน
         self._watchdog.start()
         self._thread.start()
+        if self._finder is not None:
+            self._finder.start()
 
     def shutdown(self) -> None:
         """ปล่อยปุ่มเมาส์ก่อนเสมอ แล้วค่อยหยุด worker และปิด tracker"""
         self._watchdog.stop()
         self._stats_timer.stop()
         self._hotkeys.stop()
+        if self._finder is not None:
+            self._finder.stop()
         self._pipeline.shutdown()
         if self._thread.stop():
             self._tracker.close()
@@ -778,6 +803,23 @@ def _report(title: str, text: str, *, error: bool) -> None:
     box(None, title, text)
 
 
+def _check_targeting() -> str:
+    """Target Lock ใช้ได้ไหม (ไม่นับเป็นความล้มเหลว — ไม่มีก็ใช้งานได้ แค่ไม่ล็อกเป้า)"""
+    if sys.platform != "win32":
+        return "· Target Lock ใช้ได้เฉพาะบน Windows"
+    try:
+        from .targeting import UiaBackend
+
+        backend = UiaBackend()
+        try:
+            backend.element_chain(0, 0, 0)
+        finally:
+            backend.close()
+    except Exception as exc:  # noqa: BLE001 — รายงานทุกสาเหตุที่ทำให้ UIA ใช้ไม่ได้
+        return f"! Target Lock ใช้ไม่ได้ ({type(exc).__name__}: {exc}) — แอปยังใช้งานได้"
+    return "✓ UI Automation ใช้ได้ (Target Lock)"
+
+
 def run_check(options: Options) -> int:
     """``--check``: ตรวจว่า asset ครบและโมเดลโหลดได้ (ไม่ต้องใช้กล้อง) — ใช้ตรวจ build
 
@@ -832,6 +874,8 @@ def run_check(options: Options) -> int:
         lines.append(f"✓ ใช้ค่า calibrate จาก {calibration}")
     else:
         lines.append("· ยังไม่ได้ calibrate (ใช้ค่าใน config.toml)")
+    if config is not None and config.targeting.enabled:
+        lines.append(_check_targeting())
     if config is not None and config.poses.enabled:
         try:
             names = load_poses(poses_path()).names()

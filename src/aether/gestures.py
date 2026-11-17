@@ -37,6 +37,7 @@ from .filters import OneEuroFilter2D
 from .geometry import Finger, finger_curled, palm_center, pinch_ratio, pointer_anchor
 from .mapping import PointerTracker, ScreenArea, map_to_screen
 from .poses import POSE_PREFIX, PoseClassifier, PoseMatch
+from .snap import MagneticSnap, Target
 from .tracker import GESTURE_NONE, LM, Hand, HandFrame
 
 __all__ = [
@@ -183,6 +184,8 @@ class EngineSnapshot:
     swipe_ready: bool = False  # อยู่ในโหมด GESTURE และพร้อมรับการปัด
     launcher_selection: int | None = None  # ช่องที่เลือกอยู่ในเมนู (state = LAUNCHER)
     pose: PoseMatch | None = None  # ท่าที่สอนเองที่ใกล้มือที่สุดในเฟรมนี้ (ก่อน vote — ไว้ดูตอนปรับค่า)
+    target: Target | None = None  # ปุ่มที่ล็อกเป้า/ดูดอยู่ (M6) — None = ไม่มี
+    pointer: tuple[int, int] | None = None  # ตำแหน่งเคอร์เซอร์ก่อน snap (ใช้ถามหาปุ่มใต้มือ)
 
 
 class GestureVoter:
@@ -246,6 +249,12 @@ class GestureEngine:
         self._screen = screen
         self._poses = poses if poses else None  # library ว่าง = ไม่ต้องจำแนก
         self._reserved = reserved_gestures(config)
+        # M6: ปุ่มใต้เคอร์เซอร์มาจาก thread ของ UI Automation ผ่าน set_target (ใต้ lock ของ pipeline)
+        self._target: Target | None = None
+        self._snap = MagneticSnap(
+            config.targeting.snap_strength, config.targeting.escape_speed * screen.width
+        )
+        self._raw_cursor: tuple[int, int] | None = None
         self._double_click_ms = double_click_ms
         self._double_click_radius = max(32.0, 0.03 * screen.height)
 
@@ -325,6 +334,10 @@ class GestureEngine:
     def config(self) -> Config:
         return self._cfg
 
+    def set_target(self, target: Target | None) -> None:
+        """ปุ่มที่อยู่ใต้เคอร์เซอร์ล่าสุด (จาก :mod:`aether.targeting`) — None = ไม่มี/ปิด targeting"""
+        self._target = target if self._cfg.targeting.enabled else None
+
     def reconfigure(self, config: Config) -> None:
         """ใช้ค่า config ใหม่ทันที (live tuning) โดยไม่ล้างสถานะของมือที่ตามอยู่
 
@@ -336,6 +349,10 @@ class GestureEngine:
         euro = config.pointer.one_euro
         self._filter.set_params(euro.min_cutoff, euro.beta, euro.d_cutoff)
         self._zoom_filter.set_params(euro.min_cutoff, euro.beta, euro.d_cutoff)
+        self._snap.strength = config.targeting.snap_strength
+        self._snap.escape_speed = config.targeting.escape_speed * self._screen.width
+        if not config.targeting.enabled:
+            self._target = None
 
     def set_armed(self, armed: bool) -> list[GestureEvent]:
         """เปลี่ยนสถานะ ARM/DISARM คืน event ที่ต้องทำ (เช่นปล่อยปุ่มที่กดค้าง)"""
@@ -500,6 +517,8 @@ class GestureEngine:
         self._last_anchor = None
         self._filter.reset()
         self._pointer.reset()
+        self._snap.reset()
+        self._raw_cursor = None
         self._ready = {"left": False, "right": False}
         self._end_pinch()
         self._scroll_axis = None
@@ -940,11 +959,31 @@ class GestureEngine:
 
     def _move(self, target: tuple[float, float], gain: float, events: list[GestureEvent]) -> None:
         x, y = self._pointer.update(target, gain)
+        self._raw_cursor = (round(x), round(y))
+        x, y = self._apply_snap(x, y, sticky=gain < 1.0)
         position = (round(x), round(y))
         self._cursor = position
         if position != self._emitted:  # มือนิ่ง = ไม่สั่งย้ายซ้ำ (เมาส์จริงยังใช้ได้)
             self._emitted = position
             events.append(GestureEvent(EventKind.MOVE, x=position[0], y=position[1]))
+
+    def _apply_snap(self, x: float, y: float, *, sticky: bool) -> tuple[float, float]:
+        """M6 magnetic snap — ทำเฉพาะตอนชี้ (POINTER) และระหว่างจีบรอคลิก (PINCH_PENDING)
+
+        ตอนออกจากสองสถานะนี้ (เช่นเริ่มลาก) ตำแหน่งที่ถูกดูดไว้กลายเป็นตำแหน่งจริงของเคอร์เซอร์
+        ไม่กระโดดกลับไปตำแหน่งก่อนดูด
+        """
+        if not self._cfg.targeting.enabled:
+            return (x, y)
+        if self._state not in (State.POINTER, State.PINCH_PENDING):
+            ox, oy = self._snap.offset
+            if ox or oy:
+                self._pointer.jump_to(x + ox, y + oy)
+                x, y = self._pointer.position or (x + ox, y + oy)
+            self._snap.reset()
+            return (x, y)
+        sx, sy = self._snap.update(x, y, self._now / 1000.0, self._target, sticky=sticky)
+        return self._screen.clamp(sx, sy)
 
     def _button_up(self, reason: str) -> GestureEvent:
         x, y = self._cursor_or_origin()
@@ -1040,6 +1079,12 @@ class GestureEngine:
                 self._launcher_selection if self._state is State.LAUNCHER else None
             ),
             pose=m.pose if m is not None else None,
+            target=(
+                self._snap.active
+                if self._armed and self._state in (State.POINTER, State.PINCH_PENDING)
+                else None
+            ),
+            pointer=self._raw_cursor,
         )
 
 

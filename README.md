@@ -308,6 +308,21 @@ items = [
 - สอนชื่อเดิมซ้ำ = แทนที่ท่าเดิม (ใช้เปลี่ยนปุ่มลัดด้วย) · สอนได้สูงสุด 12 ท่า · ปิดทั้งหมดด้วย `poses.enabled = false`
 - เก็บใน `poses.json` ข้าง `config.toml` / `aether.exe` — **มีแค่ตัวเลข landmark** ไม่มีภาพ ลบไฟล์ = ลบทุกท่า
 
+### Target Lock + Magnetic Snap (Windows)
+
+ขณะ ARMED แอปถามตำแหน่งของปุ่มที่อยู่ใต้เคอร์เซอร์จาก Windows (UI Automation) แล้ว
+
+- **HUD ล็อกเป้า:** มุมกรอบ 4 มุมเด้งออกจาก reticle ไปล้อมปุ่ม พร้อมป้าย `BUTTON · Save` · จีบใกล้เต็มแล้วกรอบบีบเข้า
+  และกระพริบตอนคลิก · เลื่อนไปปุ่มอื่น กรอบเด้งตามไป
+- **ดูดเคอร์เซอร์:** เข้าใกล้กลางปุ่ม (ในรัศมี ~1/3 ของขนาดปุ่ม อย่างน้อย 24 px) เคอร์เซอร์จะถูกดึงเข้าหากลาง
+  ทำให้กดปุ่มเล็กๆ เช่น X บน title bar ได้ง่ายขึ้น · **สะบัดมือเร็วๆ เพื่อหลุด** · ระหว่างจีบรอคลิก กรอบยึดปุ่มเดิมไว้จนคลิกเสร็จ
+- ไม่ดูดตอนลาก สกรอล โหมดปัด และซูม · ปุ่มที่ใหญ่เกิน `targeting.max_size` (เช่นพื้นที่ข้อความ) ไม่ดูด
+- หยุดหาเป้าเองเมื่อหน้าต่างที่ใช้อยู่เป็นแบบเต็มจอ (เช่นเกม), เป็นโปรแกรมใน `targeting.app_blocklist`,
+  โปรแกรมค้าง (Not responding) หรือ Windows ไม่ให้อ่าน (หน้าต่างที่รันแบบ Administrator) — แอปค้างไม่ทำให้ AETHER ค้างตาม
+- ชื่อปุ่ม (อาจเป็นหัวข้ออีเมล/ชื่อไฟล์) แสดงบน HUD เท่านั้น **ไม่ถูกเขียนลง log, incident หรือสถิติ**
+  (หน้าต่าง debug แสดงแค่ชนิดกับขนาด เช่น `lock Button 46x32`)
+- ปิดทั้งหมด (กลับไปทำงานเหมือนเดิม): `targeting.enabled = false` · แสดงกรอบอย่างเดียวไม่ดูด: `snap_strength = 0`
+
 ### ระบบความปลอดภัย
 
 - เริ่มแอปในสถานะ DISARMED เสมอ และระหว่าง DISARMED ไม่มี input ใดถูกส่งให้ Windows
@@ -395,6 +410,8 @@ key ที่พิมพ์ผิดหรือค่าที่อยู่�
 | `launcher.enabled` / `hold_ms` / `timeout_ms` / `items` | เมนูเปิดแอป: เปิด/ปิด, เวลาค้าง 👍, เวลาปิดเอง, รายการ (สูงสุด 8) | |
 | `poses.enabled` / `hold_ms` | ท่าที่สอนเอง: เปิด/ปิด, ต้องค้างนานเท่าไร | ติดเอง → เพิ่ม `hold_ms` |
 | `poses.sensitivity` | ความง่ายในการรับท่าที่สอนเอง (0.25–4, ค่าเริ่มต้น 1) | ทำท่าแล้วไม่ติด → เพิ่ม, ติดเอง → ลด |
+| `targeting.enabled` / `snap_strength` / `escape_speed` | Target Lock: เปิด/ปิด, แรงดูด 0–1, ความเร็วที่หลุด (ความกว้างจอ/วินาที) | ดูดแรงไป → ลด `snap_strength` · หลุดยาก → ลด `escape_speed` |
+| `targeting.rate_hz` / `max_size` / `show_label` / `app_blocklist` | ความถี่ที่ถาม, ขนาดปุ่มสูงสุด (logical px), ป้ายชื่อปุ่ม, โปรแกรมที่ไม่ต้องหาเป้า | browser กิน CPU → ลด `rate_hz` |
 | `hotkeys.toggle_arm` / `quit` / `mark_incident` | ปุ่มลัด เช่น `"<ctrl>+<alt>+g"`, `"<ctrl>+<shift>+<f9>"` | ชนกับโปรแกรมอื่น |
 | `hud.enabled` / `opacity` | เปิด HUD, ความโปร่งรวม | |
 | `hud.theme` / `primary` / `accent` | ธีมสี หรือ `"custom"` + สีหลัก/สีเน้นที่ตั้งเอง (`"#RRGGBB"`) | |
@@ -456,6 +473,9 @@ test ทั้งหมดรันได้โดยไม่ต้องมี
       `python tools\replay.py incidents\<ไฟล์>.jsonl` พิมพ์ timeline ได้ และรันซ้ำได้ผลเดิม
 - [ ] หน้าต่าง debug กด `T` → แผง TUNE ขยับ `cooldown_ms` แล้ว Save → ค่าใน `config.toml` เปลี่ยน คอมเมนต์อยู่ครบ
 - [ ] ปิดแอป → มี `logs\session-*.json` · `python tools\report.py` แสดง p95 latency
+- [ ] ARM แล้วเลื่อนเมาส์ไปบนปุ่ม (เช่น X ของหน้าต่าง, ไอคอนบน taskbar) → กรอบ 4 มุมเด้งไปล้อม + ป้ายชนิด/ชื่อปุ่ม ·
+      เลื่อนผ่านปุ่มเร็วๆ กรอบตามทัน · `targeting.enabled = false` แล้วโหลด config ใหม่ → ไม่มีกรอบ
+- [ ] เปิด browser (Chrome) แล้วชี้ปุ่มในหน้าเว็บ → ล็อกได้ · ดู CPU ของ browser ใน Task Manager ว่าไม่พุ่ง
 
 **M0 — เห็นมือ** (`python -m aether --debug --dry-run`)
 
@@ -586,6 +606,7 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 | หลัง v1 | สอนท่ามือเอง (แทน Model Maker — ดู D40) | ✅ โค้ดเสร็จ · รอทดสอบกับกล้องจริง |
 | v1 §4.1 | แหล่งเฟรมจำลอง `--source mouse` / `replay:PATH` | ✅ โค้ดเสร็จ · ลองได้โดยไม่ต้องมีกล้อง |
 | v1.1 M5 | จดปัญหา (`Ctrl+Alt+M`), สถิติ session, `report.py` / `replay.py` / `label_incidents.py`, live tuning | ✅ โค้ดเสร็จ · รอใช้งานจริง |
+| v1.1 M6 | Target Lock + Magnetic Snap (UI Automation) | ✅ โค้ดเสร็จ · การหาปุ่มผ่าน UIA ทดสอบบน Windows (CI) · รอทดสอบกับมือจริง |
 | backlog | สั่งด้วยเสียงแบบ offline | ยังไม่ทำ — ต้องเพิ่ม dependency ใหม่ (พักไว้ก่อน) |
 
 การตัดสินใจที่ต่างจาก spec จดไว้ใน [`docs/DECISIONS.md`](docs/DECISIONS.md)
@@ -611,6 +632,8 @@ python tools\record_landmarks.py tests\fixtures\click_x3.jsonl --seconds 6 `
 | ท่าที่สอนเองไม่ติด | เปิดหน้าต่างสอนแล้วลองท่า ดูเหตุผล: "ไม่ตรงท่าไหน" → หันมือให้ใกล้ตอนสอน สอนใหม่ หรือเพิ่ม `poses.sensitivity` · "มือปกติ" → ท่าคล้ายมือตอนชี้เกินไป เลือกท่าที่ต่างกว่านี้ · "ก้ำกึ่งหลายท่า" → ลบท่าที่คล้ายกัน |
 | ท่าที่สอนเองติดเอง | เพิ่ม `poses.hold_ms` หรือลด `poses.sensitivity` · สอนท่านั้นใหม่ (ขั้น "มือปกติ" ให้ขยับ/จีบเยอะๆ) |
 | ไฟล์ท่ามือเสีย | ลบ `poses.json` แล้วสอนใหม่ (แอปยังทำงานได้ แค่ไม่มีท่าที่สอนเอง) |
+| ไม่มีกรอบล็อกเป้า | ใช้ได้เฉพาะ Windows และตอน ARMED · รัน `--check` ดูบรรทัด Target Lock · หน้าต่างเต็มจอ/admin/ค้าง จะไม่ล็อก |
+| เคอร์เซอร์ถูกดูดจนเลื่อนออกยาก | สะบัดมือให้เร็วขึ้น หรือลด `targeting.snap_strength` / `escape_speed` |
 | ปัดซ้าย/ขวาแล้วไม่มีอะไรเกิด | ต้องมี virtual desktop มากกว่า 1 อัน (กด `Win+Ctrl+D` เพื่อสร้าง) |
 | ไม่เห็นไอคอนใน tray | Windows ซ่อนไว้ในลูกศร `^` ข้างนาฬิกา — ลากออกมาวางบน taskbar ได้ |
 | ดับเบิลคลิก `aether.exe` แล้วไม่มีอะไรขึ้น | ดู `logs\aether.log` ข้าง exe และรัน `aether.exe --check` |

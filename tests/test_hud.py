@@ -443,7 +443,15 @@ def test_radar_zooms_hand_to_fit_and_prefers_dominant(theme):
 def test_panels_can_be_disabled(qapp, theme):
     config = parse_config({"hud": {"show_telemetry": False, "show_radar": False}})
     overlay = HudOverlay(config, FHD, theme=theme, sampler=FakeSampler())
-    assert set(overlay._elements) == {"boot", "badge", "radial", "charge", "launcher", "reticle"}
+    assert set(overlay._elements) == {
+        "boot",
+        "badge",
+        "radial",
+        "charge",
+        "launcher",
+        "target",
+        "reticle",
+    }
     overlay.start(boot=False)
     overlay.show_packet(packet(snapshot()))
     render(overlay)

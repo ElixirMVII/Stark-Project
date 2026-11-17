@@ -30,6 +30,7 @@ from .launcher import LauncherMenu
 from .panels import HandRadar, StatusBadge, TelemetryPanel, TelemetrySampler
 from .radial import ChargeRing, Radial
 from .reticle import Reticle
+from .target_lock import TargetLock
 from .theme import Theme
 
 __all__ = ["OVERLAY_FLAGS", "HudGroup", "HudOverlay"]
@@ -104,6 +105,7 @@ class HudOverlay(QWidget):
         self._radial = Radial(self._theme, actions)
         self._charge = ChargeRing(self._theme, actions)
         self._launcher = LauncherMenu(self._theme, [item.label for item in config.launcher.items])
+        self._target_lock = TargetLock(self._theme, show_label=config.targeting.show_label)
         self._badge = StatusBadge(self._theme, dry_run=dry_run) if panels else None
         self._telemetry = (
             TelemetryPanel(self._theme) if panels and config.hud.show_telemetry else None
@@ -124,6 +126,7 @@ class HudOverlay(QWidget):
         self._elements["radial"] = self._radial
         self._elements["charge"] = self._charge
         self._elements["launcher"] = self._launcher
+        self._elements["target"] = self._target_lock
         self._elements["reticle"] = self._reticle
         self._painted: dict[str, QRectF] = {}
 
@@ -192,6 +195,8 @@ class HudOverlay(QWidget):
             self._refresh("charge")
         self._launcher.set_state(position, snapshot)
         self._refresh("launcher")
+        self._target_lock.set_state(self._target_rect(snapshot), position, snapshot)
+        self._refresh("target")
 
         if self._badge is not None and self._badge.set_snapshot(snapshot):
             self._refresh("badge")
@@ -231,6 +236,7 @@ class HudOverlay(QWidget):
             if kind is EventKind.CLICK and here:
                 color = theme.accent if event.button == "right" else theme.primary
                 self._reticle.add_shockwave(self.to_logical(event.x, event.y), color, now)
+                self._target_lock.flash(now)
             elif kind in shockwaves and here:
                 self._reticle.add_shockwave(
                     self.to_logical(event.x, event.y), shockwaves[kind], now
@@ -274,6 +280,16 @@ class HudOverlay(QWidget):
         if self._telemetry is not None and self._telemetry.set_armed(armed):
             self._refresh("telemetry")
 
+    def _target_rect(self, snapshot) -> QRectF | None:
+        """สี่เหลี่ยมของปุ่มที่ล็อกเป้า เป็น logical px ของ overlay นี้ (None = ไม่มี / อยู่จออื่น)"""
+        target = snapshot.target
+        if target is None or not self._screen.contains(*target.center):
+            return None
+        top_left = self.to_logical(target.left, target.top)
+        return QRectF(
+            top_left.x(), top_left.y(), target.width / self._dpr, target.height / self._dpr
+        )
+
     def notify(self, text: str, sound: str | None = "click") -> None:
         """ข้อความยืนยันชั่วครู่ใต้ป้ายสถานะ + เสียงสั้นๆ (เช่น จดเหตุการณ์แล้ว)"""
         if self._badge is not None:
@@ -299,6 +315,7 @@ class HudOverlay(QWidget):
             ("boot", self._boot),
             ("radial", self._radial),
             ("launcher", self._launcher),
+            ("target", self._target_lock),
             ("reticle", self._reticle),
         )
         for key, element in animated:

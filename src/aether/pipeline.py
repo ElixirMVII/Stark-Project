@@ -104,6 +104,11 @@ class Pipeline:
 
     # ---- thread ใดก็ได้ -------------------------------------------------- #
 
+    def set_target(self, target) -> None:
+        """ปุ่มใต้เคอร์เซอร์ล่าสุดจาก thread ของ UI Automation (M6)"""
+        with self._lock:
+            self._engine.set_target(target)
+
     def reconfigure(self, config: Config) -> None:
         """ใช้ config ใหม่ทันที (live tuning) — ดู :meth:`GestureEngine.reconfigure`"""
         with self._lock:
