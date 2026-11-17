@@ -198,3 +198,25 @@ def test_mediapipe_native_library_loads():
     with HandTracker(model_path(), num_hands=2, mirrored=True) as tracker:
         frame = tracker.process(np.zeros((480, 640, 3), dtype=np.uint8), 0)
     assert frame.hands == ()
+
+
+def test_monitors_are_enumerated_in_physical_pixels(qapp):
+    """EnumDisplayMonitors: จอหลักอยู่ที่ (0, 0) และขนาดตรงกับ GetSystemMetrics"""
+    from aether.mapping import list_monitors, match_qt_screens
+
+    monitors = list_monitors()
+    primary = [m for m in monitors if m.primary]
+    assert len(primary) == 1
+    user32 = ctypes.windll.user32
+    geometry = primary[0].geometry
+    assert (geometry.left, geometry.top) == (0, 0)
+    assert (geometry.width, geometry.height) == (
+        user32.GetSystemMetrics(0),
+        user32.GetSystemMetrics(1),
+    )
+    assert primary[0].name.startswith("\\\\.\\DISPLAY")
+
+    from PySide6.QtGui import QGuiApplication
+
+    matched = match_qt_screens(monitors, QGuiApplication.screens())
+    assert all(screen is not None for screen in matched)

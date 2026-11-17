@@ -18,6 +18,7 @@ vote_window = 5
 active_region = [0.15, 0.10, 0.85, 0.70]   # x0, y0, x1, y1 (normalized)
 one_euro = { min_cutoff = 1.0, beta = 0.02, d_cutoff = 1.0 }
 pinch_lock_gain = 0.2
+screens = "primary"          # "primary" = จอหลักจอเดียว | "all" = ทุกจอ (active region ยืดเต็มทุกจอ)
 
 [pinch]
 on = 0.25

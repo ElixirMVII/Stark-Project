@@ -118,8 +118,13 @@ class PointerConfig:
     active_region: tuple[float, float, float, float] = (0.15, 0.10, 0.85, 0.70)
     one_euro: OneEuroConfig = field(default_factory=OneEuroConfig)
     pinch_lock_gain: float = 0.2
+    screens: str = "primary"  # "primary" = จอหลักจอเดียว | "all" = ทุกจอรวมกัน
 
     def __post_init__(self) -> None:
+        _require(
+            self.screens in ("primary", "all"),
+            f'pointer.screens ต้องเป็น "primary" หรือ "all" (ได้ {self.screens!r})',
+        )
         x0, y0, x1, y1 = self.active_region
         _require(
             0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0,

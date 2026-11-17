@@ -298,3 +298,15 @@ calibration แล้วออก (exit 0 = พร้อม, 2 = ใช้ไม
 - เพิ่ม hook สำหรับการรันอัตโนมัติ: `AETHER_NO_DIALOG=1` ไม่แสดงกล่องข้อความ และ `--check` เขียนผลลง log
   พร้อมบรรทัด `check result: OK|FAIL` (log ตอนปิดแอปมี `shutdown complete`)
 - repo เป็น public จึงใช้ Actions บน Windows ได้โดยไม่เสียโควตา
+
+### D36 · หลายจอ (backlog ข้อแรก)
+- `pointer.screens = "primary"` (ค่าเริ่มต้น = พฤติกรรม v1) | `"all"` — key ใหม่ที่ไม่มีใน spec v1
+- `mapping.Desktop` รวมทุกจอ (physical px จาก `EnumDisplayMonitors` + `GetMonitorInfoW` บน Windows,
+  จาก QScreen นอก Windows) และมี interface เดียวกับ `ScreenGeometry` engine จึงใช้ได้โดยไม่ต้องแก้:
+  active region ยืดเต็มกรอบรวมทุกจอ, `clamp` ดึงจุดในช่องว่างระหว่างจอเข้าจอที่ใกล้ที่สุด
+- เลือก map เต็มกรอบรวม (absolute) แทนการ "ขยับข้ามจอเมื่อชนขอบ" เพราะคงหลักการเดิมของ v1 ที่ตำแหน่งมือ
+  = ตำแหน่งเคอร์เซอร์เสมอ แลกกับความละเอียดที่ลดลงตามความกว้างรวม
+- HUD: หนึ่ง `HudOverlay` ต่อจอ (`HudGroup`) จอหลักมีแผง/boot/เสียง จออื่นแสดงเฉพาะสิ่งที่ตามเคอร์เซอร์
+  แต่ละ overlay แปลง physical → logical ด้วย devicePixelRatio ของจอตัวเอง (รองรับ scale ต่างกัน)
+- จับคู่จอ Win32 กับ QScreen ด้วยชื่ออุปกรณ์ (`\\.\DISPLAYn`) ถ้าไม่ตรงใช้ลำดับตำแหน่ง
+- **ยังไม่ได้ทดสอบกับหลายจอจริง** (CI มีจอเดียว) — test ใช้ข้อมูลจอจำลองสองแบบ (วางข้างกัน, เหลื่อมกัน)

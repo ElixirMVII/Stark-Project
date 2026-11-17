@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from .config import Config
 from .filters import OneEuroFilter2D
 from .geometry import Finger, finger_curled, palm_center, pinch_ratio, pointer_anchor
-from .mapping import PointerTracker, ScreenGeometry, map_to_screen
+from .mapping import PointerTracker, ScreenArea, map_to_screen
 from .tracker import GESTURE_NONE, LM, Hand, HandFrame
 
 __all__ = [
@@ -188,7 +188,7 @@ class GestureEngine:
     def __init__(
         self,
         config: Config,
-        screen: ScreenGeometry,
+        screen: ScreenArea,
         *,
         double_click_ms: int = DEFAULT_DOUBLE_CLICK_MS,
     ) -> None:

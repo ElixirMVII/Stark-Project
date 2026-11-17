@@ -4,7 +4,8 @@
 เป็น DPI-aware ซึ่ง Qt 6 ตั้งให้อัตโนมัติ) ส่วนการวาดของ Qt ใช้ logical px จึงต้องแปลงด้วย
 ``devicePixelRatio``
 
-v1 รองรับจอหลักจอเดียว แต่ :class:`ScreenGeometry` เก็บ ``left``/``top`` ไว้ให้รองรับหลายจอได้ภายหลัง
+หลายจอ (``pointer.screens = "all"``): :class:`Desktop` รวมทุกจอเป็นพื้นที่เดียว active region ถูกยืด
+เต็มกรอบที่ครอบทุกจอ และตำแหน่งที่ตกในช่องว่างระหว่างจอถูกดึงเข้าจอที่ใกล้ที่สุด
 """
 
 from __future__ import annotations
@@ -14,11 +15,16 @@ import sys
 from dataclasses import dataclass
 
 __all__ = [
+    "Desktop",
+    "Monitor",
     "PointerTracker",
     "Region",
+    "ScreenArea",
     "ScreenGeometry",
+    "list_monitors",
     "logical_to_physical",
     "map_to_screen",
+    "match_qt_screens",
     "normalize_in_region",
     "physical_to_logical",
     "primary_screen_geometry",
@@ -55,6 +61,82 @@ class ScreenGeometry:
             min(max(y, float(self.top)), float(self.bottom)),
         )
 
+    def contains(self, x: float, y: float) -> bool:
+        return self.left <= x < self.left + self.width and self.top <= y < self.top + self.height
+
+    def union(self, other: ScreenGeometry) -> ScreenGeometry:
+        left, top = min(self.left, other.left), min(self.top, other.top)
+        right = max(self.left + self.width, other.left + other.width)
+        bottom = max(self.top + self.height, other.top + other.height)
+        return ScreenGeometry(left, top, right - left, bottom - top)
+
+
+@dataclass(frozen=True, slots=True)
+class Monitor:
+    """จอหนึ่งจอ: พื้นที่เป็น physical px ในพิกัดของ virtual desktop"""
+
+    name: str  # ชื่ออุปกรณ์ เช่น ``\\.\DISPLAY1`` (Windows) — ใช้จับคู่กับ QScreen
+    geometry: ScreenGeometry
+    primary: bool = False
+
+
+class Desktop:
+    """ทุกจอรวมกัน — ใช้แทน :class:`ScreenGeometry` ได้ (มี left/top/width/height/right/bottom/clamp)
+
+    ``left/top/width/height`` คือกรอบที่ครอบทุกจอ (active region ถูกยืดเต็มกรอบนี้) ส่วน
+    :meth:`clamp` ดึงจุดเข้าจอที่ใกล้ที่สุด จุดในช่องว่างระหว่างจอจึงไม่ทำให้เคอร์เซอร์หลุด
+    """
+
+    def __init__(self, monitors: tuple[Monitor, ...] | list[Monitor]) -> None:
+        if not monitors:
+            raise ValueError("ต้องมีจออย่างน้อยหนึ่งจอ")
+        self.monitors = tuple(monitors)
+        bounds = self.monitors[0].geometry
+        for monitor in self.monitors[1:]:
+            bounds = bounds.union(monitor.geometry)
+        self.bounds = bounds
+
+    @property
+    def left(self) -> int:
+        return self.bounds.left
+
+    @property
+    def top(self) -> int:
+        return self.bounds.top
+
+    @property
+    def width(self) -> int:
+        return self.bounds.width
+
+    @property
+    def height(self) -> int:
+        return self.bounds.height
+
+    @property
+    def right(self) -> int:
+        return self.bounds.right
+
+    @property
+    def bottom(self) -> int:
+        return self.bounds.bottom
+
+    @property
+    def primary(self) -> Monitor:
+        return next((m for m in self.monitors if m.primary), self.monitors[0])
+
+    def monitor_at(self, x: float, y: float) -> Monitor:
+        """จอที่มีจุดนี้ (ถ้าอยู่นอกทุกจอ: จอที่ใกล้ที่สุด)"""
+        for monitor in self.monitors:
+            if monitor.geometry.contains(x, y):
+                return monitor
+        return min(self.monitors, key=lambda m: math.dist((x, y), m.geometry.clamp(x, y)))
+
+    def clamp(self, x: float, y: float) -> tuple[float, float]:
+        return self.monitor_at(x, y).geometry.clamp(x, y)
+
+
+ScreenArea = ScreenGeometry | Desktop  # พื้นที่ที่เคอร์เซอร์ไปได้: จอเดียว หรือทุกจอ
+
 
 def normalize_in_region(nx: float, ny: float, region: Region) -> tuple[float, float]:
     """ตำแหน่งใน active region เป็น 0–1 (นอก region ถูกตรึงที่ขอบ)"""
@@ -64,9 +146,7 @@ def normalize_in_region(nx: float, ny: float, region: Region) -> tuple[float, fl
     return (min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0))
 
 
-def map_to_screen(
-    nx: float, ny: float, region: Region, screen: ScreenGeometry
-) -> tuple[float, float]:
+def map_to_screen(nx: float, ny: float, region: Region, screen: ScreenArea) -> tuple[float, float]:
     """จุดในเฟรมกล้อง (normalized) → physical px บนจอ โดย active region ถูกยืดเต็มจอ"""
     u, v = normalize_in_region(nx, ny, region)
     return (screen.left + u * (screen.width - 1), screen.top + v * (screen.height - 1))
@@ -100,6 +180,113 @@ def primary_screen_geometry() -> ScreenGeometry:
     return ScreenGeometry(0, 0, round(size.width() * dpr), round(size.height() * dpr))
 
 
+def list_monitors() -> list[Monitor]:
+    """ทุกจอเป็น physical px (เรียกหลังสร้าง QApplication — process ต้องเป็น DPI-aware แล้ว)
+
+    Windows ใช้ ``EnumDisplayMonitors`` + ``GetMonitorInfoW`` ระบบอื่นใช้ QScreen (geometry × dpr)
+    """
+    if sys.platform == "win32":
+        monitors = _win32_monitors()
+        if monitors:
+            return monitors
+    from PySide6.QtGui import QGuiApplication
+
+    primary = QGuiApplication.primaryScreen()
+    result = []
+    for screen in QGuiApplication.screens():
+        geometry, dpr = screen.geometry(), screen.devicePixelRatio()
+        result.append(
+            Monitor(
+                name=screen.name(),
+                geometry=ScreenGeometry(
+                    round(geometry.x() * dpr),
+                    round(geometry.y() * dpr),
+                    round(geometry.width() * dpr),
+                    round(geometry.height() * dpr),
+                ),
+                primary=screen is primary,
+            )
+        )
+    if not result:
+        raise RuntimeError("ไม่พบจอ (ต้องสร้าง QApplication ก่อน)")
+    return result
+
+
+def _win32_monitors() -> list[Monitor]:
+    import ctypes
+    from ctypes import wintypes
+
+    class MONITORINFOEXW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+            ("szDevice", wintypes.WCHAR * 32),
+        ]
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HMONITOR,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        wintypes.LPARAM,
+    )
+    user32.EnumDisplayMonitors.argtypes = (
+        wintypes.HDC,
+        ctypes.c_void_p,
+        callback_type,
+        wintypes.LPARAM,
+    )
+    user32.EnumDisplayMonitors.restype = wintypes.BOOL
+    user32.GetMonitorInfoW.argtypes = (wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW))
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+
+    monitors: list[Monitor] = []
+
+    def on_monitor(handle, _hdc, _rect, _data) -> bool:
+        info = MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        if user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+            r = info.rcMonitor
+            monitors.append(
+                Monitor(
+                    name=info.szDevice,
+                    geometry=ScreenGeometry(r.left, r.top, r.right - r.left, r.bottom - r.top),
+                    primary=bool(info.dwFlags & 1),  # MONITORINFOF_PRIMARY
+                )
+            )
+        return True
+
+    user32.EnumDisplayMonitors(None, None, callback_type(on_monitor), 0)
+    return monitors
+
+
+def match_qt_screens(monitors: list[Monitor] | tuple[Monitor, ...], screens: list) -> list:
+    """จับคู่จอ (physical) กับ QScreen ตามลำดับของ ``monitors`` (``None`` ถ้าจับคู่ไม่ได้)
+
+    ใช้ชื่ออุปกรณ์ก่อน (Windows: ``QScreen.name()`` ตรงกับ ``szDevice``) ที่เหลือจับคู่ตามตำแหน่ง
+    (เรียงซ้าย→ขวา บน→ล่าง เหมือนกันทั้งสองฝั่ง)
+    """
+    matched: list = [None] * len(monitors)
+    remaining = list(screens)
+    for i, monitor in enumerate(monitors):
+        for screen in remaining:
+            if screen.name() == monitor.name:
+                matched[i] = screen
+                remaining.remove(screen)
+                break
+    unmatched = sorted(
+        (i for i in range(len(monitors)) if matched[i] is None),
+        key=lambda i: (monitors[i].geometry.left, monitors[i].geometry.top),
+    )
+    remaining.sort(key=lambda s: (s.geometry().x(), s.geometry().y()))
+    for i, screen in zip(unmatched, remaining):
+        matched[i] = screen
+    return matched
+
+
 class PointerTracker:
     """ตำแหน่งเคอร์เซอร์ที่ตาม "เป้า" (ตำแหน่งมือที่ map แล้ว) ด้วย gain ที่ปรับได้
 
@@ -111,7 +298,7 @@ class PointerTracker:
 
     RECONVERGE = 0.5
 
-    def __init__(self, screen: ScreenGeometry) -> None:
+    def __init__(self, screen: ScreenArea) -> None:
         self._screen = screen
         self._pos: tuple[float, float] | None = None
         self._target: tuple[float, float] | None = None

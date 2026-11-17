@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import __version__
@@ -42,10 +43,16 @@ from .config import (
 from .debug_view import DebugView
 from .gestures import EventKind, GestureEngine, GestureEvent
 from .hotkeys import HotkeyManager, parse_hotkey
-from .hud.overlay import HudOverlay
+from .hud.overlay import HudGroup, HudOverlay
 from .hud.theme import Theme
 from .logsetup import configure_logging, install_excepthooks
-from .mapping import ScreenGeometry, primary_screen_geometry
+from .mapping import (
+    Desktop,
+    ScreenArea,
+    list_monitors,
+    match_qt_screens,
+    primary_screen_geometry,
+)
 from .pipeline import Pipeline
 from .sound import SOUND_NAMES, SoundPlayer
 from .tracker import HandTracker
@@ -91,7 +98,7 @@ class AetherApp(QObject):
         *,
         source: FrameSource | None = None,
         backend: InputBackend | None = None,
-        screen: ScreenGeometry | None = None,
+        screen: ScreenArea | None = None,
         hotkeys: HotkeyManager | None = None,
         quit_on_debug_close: bool = True,
         parent: QObject | None = None,
@@ -108,7 +115,13 @@ class AetherApp(QObject):
         else:
             self._dry_run = options.dry_run
         self._executor = ActionExecutor(backend, dataclasses.asdict(config.actions))
-        screen = screen or primary_screen_geometry()
+        if screen is None:
+            screen = (
+                Desktop(list_monitors())
+                if config.pointer.screens == "all"
+                else primary_screen_geometry()
+            )
+        self._screen = screen
         self._engine = GestureEngine(config, screen, double_click_ms=double_click_time_ms())
         # event มาจาก worker/hotkey thread → ส่งต่อเป็น Qt signal เพื่อให้ไปถึง UI thread
         self._pipeline = Pipeline(
@@ -138,18 +151,9 @@ class AetherApp(QObject):
         if options.debug:
             self._ensure_debug_view()
 
-        self._hud: HudOverlay | None = None
+        self._hud: HudOverlay | HudGroup | None = None
         if config.hud.enabled and not options.no_hud:
-            sounds = SoundPlayer(
-                assets_dir() / "sounds", enabled=config.hud.sounds, volume=config.hud.volume
-            )
-            self._hud = HudOverlay(
-                config,
-                screen,
-                dry_run=self._dry_run,
-                theme=Theme.from_config(config.hud, assets_dir() / "fonts"),
-                sounds=sounds,
-            )
+            self._hud = self._build_hud(screen)
 
         # ถ้ากล้องค้าง worker จะปล่อยปุ่มเมาส์เองไม่ได้ จึงให้ UI thread คอยเช็ก
         self._watchdog = QTimer(self)
@@ -175,8 +179,13 @@ class AetherApp(QObject):
         return self._debug_view is not None and self._debug_view.isVisible()
 
     @property
-    def hud(self) -> HudOverlay | None:
+    def hud(self) -> HudOverlay | HudGroup | None:
         return self._hud
+
+    @property
+    def screen(self) -> ScreenArea:
+        """พื้นที่ที่เคอร์เซอร์ไปได้ (จอหลัก หรือทุกจอ)"""
+        return self._screen
 
     @property
     def latest_packet(self) -> FramePacket | None:
@@ -252,6 +261,36 @@ class AetherApp(QObject):
             self._debug_view.deleteLater()
 
     # ---- internal ------------------------------------------------------- #
+
+    def _build_hud(self, screen: ScreenArea) -> HudOverlay | HudGroup:
+        """จอเดียว: overlay เดียว / หลายจอ: หนึ่ง overlay ต่อจอ (แผงและเสียงอยู่ที่จอหลัก)"""
+        config = self._config
+        sounds = SoundPlayer(
+            assets_dir() / "sounds", enabled=config.hud.sounds, volume=config.hud.volume
+        )
+        theme = Theme.from_config(config.hud, assets_dir() / "fonts")
+        if not isinstance(screen, Desktop):
+            return HudOverlay(config, screen, dry_run=self._dry_run, theme=theme, sounds=sounds)
+        monitors = sorted(screen.monitors, key=lambda m: not m.primary)  # จอหลักก่อน
+        qt_screens = match_qt_screens(monitors, QGuiApplication.screens())
+        overlays = [
+            HudOverlay(
+                config,
+                monitor.geometry,
+                dry_run=self._dry_run,
+                theme=theme,
+                sounds=sounds if index == 0 else None,
+                qt_screen=qt_screen,
+                panels=index == 0,
+            )
+            for index, (monitor, qt_screen) in enumerate(zip(monitors, qt_screens))
+        ]
+        log.info(
+            "HUD บน %d จอ: %s",
+            len(overlays),
+            ", ".join(f"{m.name or '?'} {m.geometry.width}x{m.geometry.height}" for m in monitors),
+        )
+        return HudGroup(overlays)
 
     def _ensure_debug_view(self) -> DebugView:
         if self._debug_view is None:

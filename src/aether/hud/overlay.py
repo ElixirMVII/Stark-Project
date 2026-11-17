@@ -1,6 +1,8 @@
 """หน้าต่าง overlay ของ HUD: โปร่งใส เต็มจอหลัก อยู่บนสุด และ **คลิกทะลุได้ 100%**
 
 - ไม่รับ input ใดๆ (``WindowTransparentForInput``) ไม่แย่ง focus ไม่โผล่ใน taskbar
+- หลายจอ: หนึ่ง overlay ต่อจอ (:class:`HudGroup`) แผงต่างๆ และ boot อยู่บนจอหลัก ส่วน reticle /
+  เข็มทิศ / วงแหวนชาร์จ / คลื่นคลิก ขึ้นบนจอที่เคอร์เซอร์อยู่
 - พิกัดจาก engine เป็น physical px → แปลงเป็น logical px ด้วย ``devicePixelRatio`` ก่อนวาด
 - วาดด้วย QPainter และสั่ง ``update()`` เฉพาะกรอบของชิ้นที่เปลี่ยน (รอบ reticle และแผงต่างๆ)
   ไม่วาดใหม่ทั้งจอทุกเฟรม ถ้าไม่มีอะไรขยับก็ไม่วาดเลย
@@ -28,7 +30,7 @@ from .radial import ChargeRing, Radial
 from .reticle import Reticle
 from .theme import Theme
 
-__all__ = ["OVERLAY_FLAGS", "HudOverlay"]
+__all__ = ["OVERLAY_FLAGS", "HudGroup", "HudOverlay"]
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +68,8 @@ class HudOverlay(QWidget):
         sampler: TelemetrySampler | None = None,
         device_pixel_ratio: float | None = None,
         clock=time.perf_counter,
+        qt_screen=None,
+        panels: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent, OVERLAY_FLAGS)
@@ -83,24 +87,33 @@ class HudOverlay(QWidget):
         self._sounds = sounds
         self._sampler = sampler
 
-        qt_screen = QGuiApplication.primaryScreen()
+        qt_screen = qt_screen or QGuiApplication.primaryScreen()
         self._dpr = device_pixel_ratio or (qt_screen.devicePixelRatio() if qt_screen else 1.0)
         if qt_screen is not None:
+            self.setScreen(qt_screen)
             # เตี้ยกว่าจอ 1px: หน้าต่างที่คลุมจอพอดีอาจถูก Windows มองเป็นแอป fullscreen
             self.setGeometry(qt_screen.geometry().adjusted(0, 0, 0, -1))
+        self._panels = panels
+        self._cursor_inside = False
 
         self._reticle = Reticle(self._theme)
         self._boot = BootSequence(self._theme)
         actions = dataclasses.asdict(config.actions)
         self._radial = Radial(self._theme, actions)
         self._charge = ChargeRing(self._theme, actions)
-        self._badge = StatusBadge(self._theme, dry_run=dry_run)
-        self._telemetry = TelemetryPanel(self._theme) if config.hud.show_telemetry else None
+        self._badge = StatusBadge(self._theme, dry_run=dry_run) if panels else None
+        self._telemetry = (
+            TelemetryPanel(self._theme) if panels and config.hud.show_telemetry else None
+        )
         self._radar = (
-            HandRadar(self._theme, config.tracking.dominant_hand) if config.hud.show_radar else None
+            HandRadar(self._theme, config.tracking.dominant_hand)
+            if panels and config.hud.show_radar
+            else None
         )
         # ลำดับการวาด: ล่าง → บน
-        self._elements: dict[str, _Element] = {"boot": self._boot, "badge": self._badge}
+        self._elements: dict[str, _Element] = {"boot": self._boot}
+        if self._badge is not None:
+            self._elements["badge"] = self._badge
         if self._telemetry is not None:
             self._elements["telemetry"] = self._telemetry
         if self._radar is not None:
@@ -129,7 +142,7 @@ class HudOverlay(QWidget):
         """แสดง overlay และเล่น boot sequence"""
         self.show()
         now = self._clock()
-        if boot:
+        if boot and self._panels:
             self._boot.start(now, QPointF(self.width() / 2.0, self.height() / 2.0))
             self._play("boot")
         self._sample_telemetry()
@@ -145,6 +158,11 @@ class HudOverlay(QWidget):
 
     # ---- inputs --------------------------------------------------------- #
 
+    @property
+    def screen_geometry(self) -> ScreenGeometry:
+        """พื้นที่ของจอที่ overlay นี้คลุม (physical px)"""
+        return self._screen
+
     def to_logical(self, x: float, y: float) -> QPointF:
         """physical px ของจอ → logical px ภายใน overlay"""
         lx, ly = physical_to_logical(x - self._screen.left, y - self._screen.top, self._dpr)
@@ -157,7 +175,9 @@ class HudOverlay(QWidget):
         self._fps = packet.fps
         self._latency_ms = packet.process_ms
 
-        position = self.to_logical(*snapshot.cursor) if snapshot.cursor is not None else None
+        cursor = snapshot.cursor
+        self._cursor_inside = cursor is not None and self._screen.contains(*cursor)
+        position = self.to_logical(*cursor) if self._cursor_inside else None  # อยู่จออื่น: ซ่อน
         self._reticle.set_state(position, snapshot, self._clock())
         self._refresh("reticle")
         self._radial.set_state(position, snapshot)
@@ -165,7 +185,7 @@ class HudOverlay(QWidget):
         if self._charge.set_state(position, snapshot):
             self._refresh("charge")
 
-        if self._badge.set_snapshot(snapshot):
+        if self._badge is not None and self._badge.set_snapshot(snapshot):
             self._refresh("badge")
         if self._telemetry is not None and self._telemetry.set_armed(snapshot.armed):
             self._refresh("telemetry")
@@ -175,49 +195,63 @@ class HudOverlay(QWidget):
             self._refresh("radar")
 
     def handle_events(self, events: tuple[GestureEvent, ...]) -> None:
-        """event ที่ไม่ใช่การขยับ: shockwave + เสียง + สถานะ ARM"""
+        """event ที่ไม่ใช่การขยับ: shockwave + เสียง + สถานะ ARM
+
+        คลื่นคลิก/ไฮไลต์ของเข็มทิศขึ้นเฉพาะบนจอที่เกิดเหตุ ส่วนเสียงเล่นโดย overlay ที่มี sounds
+        (จอหลัก) เสมอ ไม่ว่าเหตุจะเกิดบนจอไหน
+        """
         now = self._clock()
         theme = self._theme
+        shockwaves = {
+            EventKind.BUTTON_DOWN: theme.accent,
+            EventKind.BUTTON_UP: theme.primary,
+        }
+        sounds = {
+            EventKind.CLICK: "click",
+            EventKind.BUTTON_DOWN: "click",
+            EventKind.BUTTON_UP: "release",
+            EventKind.ARMED: "arm",
+            EventKind.DISARMED: "disarm",
+        }
         for event in events:
             kind = event.kind
-            if kind is EventKind.CLICK:
+            here = self._screen.contains(event.x, event.y)
+            if kind is EventKind.CLICK and here:
                 color = theme.accent if event.button == "right" else theme.primary
                 self._reticle.add_shockwave(self.to_logical(event.x, event.y), color, now)
-                self._play("click")
-            elif kind is EventKind.BUTTON_DOWN:
-                self._reticle.add_shockwave(self.to_logical(event.x, event.y), theme.accent, now)
-                self._play("click")
-            elif kind is EventKind.BUTTON_UP:
-                self._reticle.add_shockwave(self.to_logical(event.x, event.y), theme.primary, now)
-                self._play("release")
+            elif kind in shockwaves and here:
+                self._reticle.add_shockwave(
+                    self.to_logical(event.x, event.y), shockwaves[kind], now
+                )
             elif kind is EventKind.ACTION:
                 if event.name.startswith("swipe_"):
-                    self._radial.flash(event.name.removeprefix("swipe_"), now)
-                    self._refresh("radial")
+                    if self._cursor_inside:
+                        self._radial.flash(event.name.removeprefix("swipe_"), now)
+                        self._refresh("radial")
                     self._play("swipe")
                 else:  # กำมือค้าง (ค่าเริ่มต้น: ย่อหน้าต่าง)
-                    self._reticle.add_shockwave(
-                        self.to_logical(event.x, event.y), theme.accent, now
-                    )
+                    if here:
+                        point = self.to_logical(event.x, event.y)
+                        self._reticle.add_shockwave(point, theme.accent, now)
                     self._play("minimize")
             elif kind is EventKind.ARMED:
                 self.set_armed(True)
-                self._play("arm")
             elif kind is EventKind.DISARMED:
                 self.set_armed(False)
-                self._play("disarm")
+            if kind in sounds:
+                self._play(sounds[kind])
         self._refresh("reticle")
 
     def set_armed(self, armed: bool) -> None:
         """อัปเดตป้ายสถานะทันที (ไม่ต้องรอเฟรมถัดไป เผื่อกล้องค้างอยู่)"""
-        if self._badge.set_armed(armed):
+        if self._badge is not None and self._badge.set_armed(armed):
             self._refresh("badge")
         if self._telemetry is not None and self._telemetry.set_armed(armed):
             self._refresh("telemetry")
 
     def set_alert(self, text: str | None) -> None:
         """ข้อความเตือนใต้ป้ายสถานะ (เช่น กล้องหลุด) — ``None`` = ล้าง"""
-        if self._badge.set_alert(text):
+        if self._badge is not None and self._badge.set_alert(text):
             self._refresh("badge")
             if text:
                 self._play("error")
@@ -265,7 +299,8 @@ class HudOverlay(QWidget):
 
     def _layout_panels(self) -> None:
         viewport = QRectF(0.0, 0.0, float(self.width()), float(self.height()))
-        self._badge.set_viewport(viewport)
+        if self._badge is not None:
+            self._badge.set_viewport(viewport)
         if self._telemetry is not None:
             self._telemetry.set_viewport(viewport)
         if self._radar is not None:
@@ -300,3 +335,46 @@ class HudOverlay(QWidget):
             element.paint(painter, now)
             painter.restore()
         painter.end()
+
+
+class HudGroup:
+    """HUD หลายจอ: หนึ่ง :class:`HudOverlay` ต่อจอ ใช้แทน :class:`HudOverlay` ตัวเดียวได้
+
+    ``overlays[0]`` คือจอหลัก (มีแผง สถานะ boot และเล่นเสียง) จออื่นแสดงเฉพาะสิ่งที่ตามเคอร์เซอร์
+    """
+
+    def __init__(self, overlays: list[HudOverlay]) -> None:
+        if not overlays:
+            raise ValueError("ต้องมี overlay อย่างน้อยหนึ่งจอ")
+        self.overlays = list(overlays)
+
+    @property
+    def primary(self) -> HudOverlay:
+        return self.overlays[0]
+
+    def start(self, *, boot: bool = True) -> None:
+        for overlay in self.overlays:
+            overlay.start(boot=boot)
+
+    def stop(self) -> None:
+        for overlay in self.overlays:
+            overlay.stop()
+
+    def deleteLater(self) -> None:
+        for overlay in self.overlays:
+            overlay.deleteLater()
+
+    def show_packet(self, packet: FramePacket) -> None:
+        for overlay in self.overlays:
+            overlay.show_packet(packet)
+
+    def handle_events(self, events: tuple[GestureEvent, ...]) -> None:
+        for overlay in self.overlays:
+            overlay.handle_events(events)
+
+    def set_armed(self, armed: bool) -> None:
+        for overlay in self.overlays:
+            overlay.set_armed(armed)
+
+    def set_alert(self, text: str | None) -> None:
+        self.primary.set_alert(text)
