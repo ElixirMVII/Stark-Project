@@ -256,8 +256,14 @@ class HudConfig:
     show_radar: bool = True
     sounds: bool = True
     volume: float = 0.5
+    reduce_motion: bool = False  # ปิด particle, การหายใจ และแอนิเมชันตอนบูต (เหลือแค่ fade)
+    quality: str = "high"  # "high" | "low" (low = ไม่มี glow ชั้นนอก และ particle ครึ่งเดียว)
 
     def __post_init__(self) -> None:
+        _require(
+            self.quality in ("high", "low"),
+            f'hud.quality ต้องเป็น "high" หรือ "low" (ได้ {self.quality!r})',
+        )
         _require(0.0 <= self.opacity <= 1.0, "hud.opacity ต้องอยู่ในช่วง 0–1")
         _require(0.0 <= self.volume <= 1.0, "hud.volume ต้องอยู่ในช่วง 0–1")
         for name in ("primary", "accent"):

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from .config import Config
 from .filters import OneEuroFilter2D
-from .geometry import Finger, finger_curled, palm_center, pinch_ratio, pointer_anchor
+from .geometry import Finger, finger_curled, hand_scale, palm_center, pinch_ratio, pointer_anchor
 from .mapping import PointerTracker, ScreenArea, map_to_screen
 from .poses import POSE_PREFIX, PoseClassifier, PoseMatch
 from .snap import MagneticSnap, Target
@@ -185,6 +185,7 @@ class EngineSnapshot:
     launcher_selection: int | None = None  # ช่องที่เลือกอยู่ในเมนู (state = LAUNCHER)
     pose: PoseMatch | None = None  # ท่าที่สอนเองที่ใกล้มือที่สุดในเฟรมนี้ (ก่อน vote — ไว้ดูตอนปรับค่า)
     target: Target | None = None  # ปุ่มที่ล็อกเป้า/ดูดอยู่ (M6) — None = ไม่มี
+    hand_size: float | None = None  # ขนาดมือในภาพ ÷ ความกว้างเฟรม (ใหญ่ = ใกล้กล้อง) — HUD ใช้แทนความลึก
     pointer: tuple[int, int] | None = None  # ตำแหน่งเคอร์เซอร์ก่อน snap (ใช้ถามหาปุ่มใต้มือ)
 
 
@@ -232,6 +233,7 @@ class _Metrics:
     anchor: tuple[float, float]  # จุดคุมเคอร์เซอร์ (normalized)
     in_region: bool  # มืออยู่ใน active region (+ขอบเผื่อ)
     pose: PoseMatch | None = None
+    hand_size: float = 0.0
 
 
 class GestureEngine:
@@ -488,6 +490,7 @@ class GestureEngine:
             anchor=anchor,
             in_region=self._in_region(anchor),
             pose=pose,
+            hand_size=hand_scale(hand, width, height) / max(width, 1),
         )
 
     def _in_region(self, anchor: tuple[float, float]) -> bool:
@@ -1085,6 +1088,7 @@ class GestureEngine:
                 else None
             ),
             pointer=self._raw_cursor,
+            hand_size=m.hand_size if m is not None else None,
         )
 
 

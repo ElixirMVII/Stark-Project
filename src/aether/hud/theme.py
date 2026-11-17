@@ -26,6 +26,7 @@ __all__ = [
     "chamfered_rect",
     "draw_label",
     "glow_stroke",
+    "set_glow_quality",
     "with_alpha",
 ]
 
@@ -40,6 +41,14 @@ MONO_FONT_FILE = "ShareTechMono-Regular.ttf"  # ตัวเลข telemetry
 # (ตัวคูณความหนา, alpha) ของชั้นเรืองแสง จากนอกเข้าใน — เส้นหนาโปร่งแสงเป็นส่วนที่แพงที่สุดของการวาด
 # จึงใช้แค่สองชั้น (ชั้นที่สามแทบมองไม่เห็นแต่กินเวลาเพิ่มราว 40%)
 _GLOW_LAYERS = ((4.5, 0.09), (2.2, 0.22))
+_glow_layers = _GLOW_LAYERS  # hud.quality = "low" ตัดชั้นนอกออก (set_glow_quality)
+
+
+def set_glow_quality(high: bool) -> None:
+    """``False`` = ไม่วาด glow ชั้นนอก (ชั้นที่แพงที่สุด) — ใช้กับทุก overlay ใน process"""
+    global _glow_layers
+    _glow_layers = _GLOW_LAYERS if high else _GLOW_LAYERS[1:]
+
 
 _loaded_families: dict[Path, str | None] = {}
 
@@ -127,7 +136,7 @@ def glow_stroke(
         return
     painter.setBrush(Qt.BrushStyle.NoBrush)
     if strength > 0.0:
-        for scale, layer_alpha in _GLOW_LAYERS:
+        for scale, layer_alpha in _glow_layers:
             pen = QPen(with_alpha(color, layer_alpha * strength * alpha), width * scale)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)

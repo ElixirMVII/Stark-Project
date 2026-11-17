@@ -211,19 +211,40 @@ class TelemetryPanel:
 
     WIDTH = 232.0
     HEIGHT = 140.0
+    SLIDE_SECONDS = 0.45
 
     def __init__(self, theme: Theme) -> None:
         self._theme = theme
         self._values = TelemetryValues()
         self._armed = False
         self._viewport = QRectF()
+        self._slide_start: float | None = None
+        self._offset = 0.0  # px ที่ยังเลื่อนไม่ถึงที่ (ติดลบ = อยู่นอกจอด้านซ้าย)
 
     def set_viewport(self, viewport: QRectF) -> None:
         self._viewport = QRectF(viewport)
 
+    def slide_in(self, start: float) -> None:
+        """Boot v2: สไลด์เข้าจากขอบซ้ายตั้งแต่เวลา ``start``"""
+        self._slide_start = start
+        self._offset = -(self.WIDTH + MARGIN)
+
+    def advance(self, now: float) -> bool:
+        """คืน ``True`` ระหว่างที่ยังสไลด์อยู่"""
+        if self._slide_start is None:
+            return False
+        t = (now - self._slide_start) / self.SLIDE_SECONDS
+        if t >= 1.0:
+            self._slide_start = None
+            self._offset = 0.0
+            return True  # วาดอีกครั้งที่ตำแหน่งสุดท้าย
+        eased = 1.0 - (1.0 - max(t, 0.0)) ** 3
+        self._offset = -(self.WIDTH + MARGIN) * (1.0 - eased)
+        return True
+
     def rect(self) -> QRectF:
         return QRectF(
-            self._viewport.left() + MARGIN,
+            self._viewport.left() + MARGIN + self._offset,
             self._viewport.bottom() - MARGIN - self.HEIGHT,
             self.WIDTH,
             self.HEIGHT,

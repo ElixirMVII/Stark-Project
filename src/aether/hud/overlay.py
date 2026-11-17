@@ -15,7 +15,7 @@ import logging
 import time
 from typing import Protocol
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -26,12 +26,13 @@ from ..mapping import ScreenGeometry, physical_to_logical
 from ..poses import POSE_PREFIX
 from ..sound import SoundPlayer
 from .boot import BootSequence
+from .effects import PARTICLES_PER_BURST, MinimizeCollapse, ParticlePool, SwipeStreak
 from .launcher import LauncherMenu
 from .panels import HandRadar, StatusBadge, TelemetryPanel, TelemetrySampler
 from .radial import ChargeRing, Radial
 from .reticle import Reticle
 from .target_lock import TargetLock
-from .theme import Theme
+from .theme import Theme, set_glow_quality
 
 __all__ = ["OVERLAY_FLAGS", "HudGroup", "HudOverlay"]
 
@@ -99,8 +100,20 @@ class HudOverlay(QWidget):
         self._panels = panels
         self._cursor_inside = False
 
-        self._reticle = Reticle(self._theme)
-        self._boot = BootSequence(self._theme)
+        hud = config.hud
+        set_glow_quality(hud.quality == "high")
+        self._reduce_motion = hud.reduce_motion
+        self._reticle = Reticle(self._theme, reduce_motion=hud.reduce_motion)
+        burst = PARTICLES_PER_BURST if hud.quality == "high" else PARTICLES_PER_BURST // 2
+        self._particles = None if hud.reduce_motion else ParticlePool(self._theme, per_burst=burst)
+        self._streak = SwipeStreak(self._theme)
+        self._collapse = MinimizeCollapse(self._theme)
+        # คืนกรอบ (left, top, right, bottom) ของหน้าต่างที่เพิ่งย่อ — แอปต่อเข้ากับ ActionExecutor
+        self.minimized_rect_provider = lambda: None
+        self.draw_ms = 0.0  # เวลาวาดเฉลี่ยต่อครั้ง (EMA) — งบ ≤ 4 ms (spec M7.6)
+        self.draw_ms_max = 0.0
+        self._draw_timer = QElapsedTimer()
+        self._boot = BootSequence(self._theme, reduce_motion=config.hud.reduce_motion)
         actions = dataclasses.asdict(config.actions)
         self._radial = Radial(self._theme, actions)
         self._charge = ChargeRing(self._theme, actions)
@@ -117,6 +130,8 @@ class HudOverlay(QWidget):
         )
         # ลำดับการวาด: ล่าง → บน
         self._elements: dict[str, _Element] = {"boot": self._boot}
+        self._elements["streak"] = self._streak
+        self._elements["collapse"] = self._collapse
         if self._badge is not None:
             self._elements["badge"] = self._badge
         if self._telemetry is not None:
@@ -127,6 +142,8 @@ class HudOverlay(QWidget):
         self._elements["charge"] = self._charge
         self._elements["launcher"] = self._launcher
         self._elements["target"] = self._target_lock
+        if self._particles is not None:
+            self._elements["particles"] = self._particles
         self._elements["reticle"] = self._reticle
         self._painted: dict[str, QRectF] = {}
 
@@ -153,6 +170,8 @@ class HudOverlay(QWidget):
         now = self._clock()
         if boot and self._panels:
             self._boot.start(now, QPointF(self.width() / 2.0, self.height() / 2.0))
+            if self._telemetry is not None and not self._reduce_motion:
+                self._telemetry.slide_in(now + 0.35)  # Boot v2: แผงสไลด์เข้าหลังวงแหวนเริ่มขยาย
             self._play("boot")
         self._sample_telemetry()
         self._frame_timer.start()
@@ -235,8 +254,13 @@ class HudOverlay(QWidget):
             here = self._screen.contains(event.x, event.y)
             if kind is EventKind.CLICK and here:
                 color = theme.accent if event.button == "right" else theme.primary
-                self._reticle.add_shockwave(self.to_logical(event.x, event.y), color, now)
+                point = self.to_logical(event.x, event.y)
+                self._reticle.add_shockwave(point, color, now)
+                if self._particles is not None:
+                    self._particles.burst(point, color, now)
                 self._target_lock.flash(now)
+            elif kind is EventKind.SCROLL:
+                self._reticle.handle_event(kind, event.dy, now)
             elif kind in shockwaves and here:
                 self._reticle.add_shockwave(
                     self.to_logical(event.x, event.y), shockwaves[kind], now
@@ -252,8 +276,11 @@ class HudOverlay(QWidget):
             elif kind is EventKind.ACTION:
                 if event.name.startswith("swipe_"):
                     if self._cursor_inside:
-                        self._radial.flash(event.name.removeprefix("swipe_"), now)
+                        direction = event.name.removeprefix("swipe_")
+                        self._radial.flash(direction, now)
                         self._refresh("radial")
+                        self._streak.start(direction, now)
+                        self._refresh("streak")
                     self._play("swipe")
                 elif event.name.startswith(POSE_PREFIX):  # ท่าที่สอนเอง
                     if here:
@@ -264,6 +291,7 @@ class HudOverlay(QWidget):
                     if here:
                         point = self.to_logical(event.x, event.y)
                         self._reticle.add_shockwave(point, theme.accent, now)
+                    self._start_collapse(now)
                     self._play("minimize")
             elif kind is EventKind.ARMED:
                 self.set_armed(True)
@@ -279,6 +307,22 @@ class HudOverlay(QWidget):
             self._refresh("badge")
         if self._telemetry is not None and self._telemetry.set_armed(armed):
             self._refresh("telemetry")
+
+    def _start_collapse(self, now: float) -> None:
+        """กรอบของหน้าต่างที่เพิ่งย่อ ยุบลงไปทาง taskbar (ล่างกลางของจอนี้)"""
+        try:
+            rect = self.minimized_rect_provider()
+        except Exception:  # noqa: BLE001 — effect เท่านั้น
+            rect = None
+        if rect is None:
+            return
+        left, top, right, bottom = rect
+        if not self._screen.contains((left + right) / 2, (top + bottom) / 2):
+            return
+        a, b = self.to_logical(left, top), self.to_logical(right, bottom)
+        goal = QPointF(self.width() / 2.0, self.height() - 6.0)
+        self._collapse.start(QRectF(a, b), goal, now)
+        self._refresh("collapse")
 
     def _target_rect(self, snapshot) -> QRectF | None:
         """สี่เหลี่ยมของปุ่มที่ล็อกเป้า เป็น logical px ของ overlay นี้ (None = ไม่มี / อยู่จออื่น)"""
@@ -317,11 +361,16 @@ class HudOverlay(QWidget):
             ("launcher", self._launcher),
             ("target", self._target_lock),
             ("reticle", self._reticle),
+            ("streak", self._streak),
+            ("collapse", self._collapse),
+            *((("particles", self._particles),) if self._particles is not None else ()),
         )
         for key, element in animated:
             was_painted = not self._painted.get(key, QRectF()).isEmpty()
             if element.advance(now) or was_painted:
                 self._refresh(key)
+        if self._telemetry is not None and self._telemetry.advance(now):
+            self._refresh("telemetry")
         if self._badge is not None and (self._badge.advance(now) or self._notice_shown):
             self._notice_shown = self._badge.notice is not None
             self._refresh("badge")  # ข้อความยืนยันกระพริบ (และวาดอีกครั้งตอนหายไป)
@@ -358,6 +407,7 @@ class HudOverlay(QWidget):
 
     def _layout_panels(self) -> None:
         viewport = QRectF(0.0, 0.0, float(self.width()), float(self.height()))
+        self._streak.set_viewport(viewport)
         if self._badge is not None:
             self._badge.set_viewport(viewport)
         if self._telemetry is not None:
@@ -375,6 +425,13 @@ class HudOverlay(QWidget):
 
     def paintEvent(self, event) -> None:
         self.paint_count += 1
+        self._draw_timer.start()
+        self._paint(event)
+        elapsed = self._draw_timer.nsecsElapsed() / 1e6
+        self.draw_ms += 0.1 * (elapsed - self.draw_ms)
+        self.draw_ms_max = max(self.draw_ms_max * 0.995, elapsed)
+
+    def _paint(self, event) -> None:
         painter = QPainter(self)
         painter.setClipRegion(event.region())
         # ล้างบริเวณที่จะวาดให้โปร่งใสก่อน (หน้าต่างไม่มีพื้นหลัง)
@@ -445,3 +502,16 @@ class HudGroup:
     @property
     def paint_count(self) -> int:
         return sum(overlay.paint_count for overlay in self.overlays)
+
+    @property
+    def draw_ms(self) -> float:
+        return max(overlay.draw_ms for overlay in self.overlays)
+
+    @property
+    def minimized_rect_provider(self):
+        return self.primary.minimized_rect_provider
+
+    @minimized_rect_provider.setter
+    def minimized_rect_provider(self, provider) -> None:
+        for overlay in self.overlays:
+            overlay.minimized_rect_provider = provider

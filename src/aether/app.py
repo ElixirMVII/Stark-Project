@@ -213,6 +213,7 @@ class AetherApp(QObject):
         self._hud: HudOverlay | HudGroup | None = None
         if config.hud.enabled and not options.no_hud:
             self._hud = self._build_hud(screen)
+            self._hud.minimized_rect_provider = lambda: self._executor.last_minimized_rect
 
         # ถ้ากล้องค้าง worker จะปล่อยปุ่มเมาส์เองไม่ได้ จึงให้ UI thread คอยเช็ก
         self._watchdog = QTimer(self)
@@ -495,6 +496,8 @@ class AetherApp(QObject):
         if self._hud is not None:
             self._hud.show_packet(packet)
         if self._debug_view is not None and self._debug_view.isVisible():
+            if self._hud is not None:
+                self._debug_view.set_hud_draw_ms(self._hud.draw_ms)
             self._debug_view.show_packet(packet)
         self.frame_packet.emit(packet)
 

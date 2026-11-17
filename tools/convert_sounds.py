@@ -40,6 +40,8 @@ class Role:
     name: str  # ชื่อไฟล์ผลลัพธ์ (<name>.wav)
     candidates: tuple[str, ...]  # pattern ชื่อไฟล์ในชุดเสียง เรียงตามลำดับที่อยากได้
     max_ms: int = SHORT_MS
+    # เสียงสลับแบบสุ่ม (M7.4): ไฟล์ในชุดเดียวกันที่โทนใกล้กัน → <name>_2.wav, <name>_3.wav (ไม่มีก็ข้าม)
+    variants: tuple[str, ...] = ()
 
 
 # ตัวแรกของแต่ละรายการคือไฟล์ที่ตั้งใจเลือก ที่เหลือเป็นตัวสำรองถ้าชุดเสียงเปลี่ยนชื่อไฟล์
@@ -51,12 +53,28 @@ ROLES: tuple[Role, ...] = (
         ("computerNoise_000.ogg", "computerNoise_*.ogg", "forceField_*.ogg", "doorOpen_*.ogg"),
         max_ms=BOOT_MS,
     ),
-    Role("click", ("click_002.ogg", "click_*.ogg", "select_*.ogg", "tick_*.ogg")),
-    Role("release", ("drop_002.ogg", "drop_*.ogg", "tick_*.ogg", "click_*.ogg")),
+    Role(
+        "click",
+        ("click_002.ogg", "click_*.ogg", "select_*.ogg", "tick_*.ogg"),
+        variants=("click_001.ogg", "click_003.ogg"),
+    ),
+    Role(
+        "release",
+        ("drop_002.ogg", "drop_*.ogg", "tick_*.ogg", "click_*.ogg"),
+        variants=("drop_001.ogg", "drop_003.ogg"),
+    ),
     Role("arm", ("confirmation_001.ogg", "confirmation_*.ogg", "maximize_*.ogg", "open_*.ogg")),
     Role("disarm", ("close_002.ogg", "close_*.ogg", "back_*.ogg")),
-    Role("swipe", ("scroll_003.ogg", "scroll_*.ogg", "switch_*.ogg")),
-    Role("minimize", ("minimize_004.ogg", "minimize_*.ogg", "close_*.ogg")),
+    Role(
+        "swipe",
+        ("scroll_003.ogg", "scroll_*.ogg", "switch_*.ogg"),
+        variants=("scroll_001.ogg", "scroll_005.ogg"),
+    ),
+    Role(
+        "minimize",
+        ("minimize_004.ogg", "minimize_*.ogg", "close_*.ogg"),
+        variants=("minimize_002.ogg",),
+    ),
     Role("error", ("error_004.ogg", "error_*.ogg", "glitch_*.ogg")),
 )
 ROLE_NAMES = tuple(role.name for role in ROLES)
@@ -211,6 +229,17 @@ def convert(
         report.append(
             f"  [แปลงแล้ว] {role.name}.wav ← {name} [{pack.name}] {duration_ms:.0f} ms{note}"
         )
+        if wanted:
+            continue  # เลือกไฟล์เองด้วย --map: ไม่ใส่เสียงสลับ
+        for number, variant in enumerate(role.variants, start=2):
+            key = variant.lower()
+            if key not in index or key == name:
+                continue
+            pack, member = index[key]
+            samples, sample_rate = sf.read(io.BytesIO(read_member(pack, member)), dtype="float32")
+            out = prepare(samples, sample_rate, role.max_ms)
+            sf.write(sounds_dir / f"{role.name}_{number}.wav", out, sample_rate, subtype="PCM_16")
+            report.append(f"  [แปลงแล้ว] {role.name}_{number}.wav ← {key} (เสียงสลับ)")
     return report, missing
 
 

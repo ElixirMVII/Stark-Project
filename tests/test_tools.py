@@ -316,3 +316,29 @@ def test_list_shows_available_files(fake_packs, capsys):
 def test_no_packs_gives_instructions(tmp_path, capsys):
     assert convert_sounds.main(["--downloads-dir", str(tmp_path / "none")]) == 1
     assert "download_assets.py" in capsys.readouterr().out
+
+
+def test_convert_adds_random_variants_when_the_pack_has_them(fake_packs, tmp_path, capsys):
+    """M7: เสียงสลับ <ชื่อ>_2.wav, _3.wav จากไฟล์ในชุดเดียวกัน (ไม่มีก็ข้าม ไม่ถือว่าขาด)"""
+    pytest.importorskip("soundfile")
+    pack = fake_packs / "kenney_interface-sounds.zip"
+    with zipfile.ZipFile(pack, "a") as archive:
+        tone = np.concatenate([np.zeros(10, dtype=np.float32), _tone(500, 0.15)])
+        archive.writestr("Audio/click_001.ogg", _ogg(tone))
+        archive.writestr("Audio/click_003.ogg", _ogg(tone))
+        archive.writestr("Audio/scroll_005.ogg", _ogg(tone))
+    sounds = tmp_path / "sounds"
+    code = convert_sounds.main(["--downloads-dir", str(fake_packs), "--sounds-dir", str(sounds)])
+    assert code == 0, capsys.readouterr().out
+    names = {p.name for p in sounds.iterdir()}
+    assert {"click_2.wav", "click_3.wav", "swipe_3.wav"} <= names
+    assert "swipe_2.wav" not in names  # scroll_001 ไม่มีในชุด: ข้ามไป
+
+    from aether.sound import variant_paths
+
+    assert [p.name for p in variant_paths(sounds, "click")] == [
+        "click.wav",
+        "click_2.wav",
+        "click_3.wav",
+    ]
+    assert [p.name for p in variant_paths(sounds, "swipe")] == ["swipe.wav", "swipe_3.wav"]

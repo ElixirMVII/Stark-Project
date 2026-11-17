@@ -63,6 +63,7 @@ class DebugView(QWidget):
         self._packet: FramePacket | None = None
         self._armed = False
         self._camera_info = ""
+        self._hud_draw_ms: float | None = None
         self._message: str | None = "กำลังเปิดกล้อง…"
         self._connections = hand_connections()
         self._primary = QColor(config.hud.palette.primary)
@@ -101,6 +102,10 @@ class DebugView(QWidget):
         self._tune_button.blockSignals(blocked)
         self._place_tuning()
         self.update()
+
+    def set_hud_draw_ms(self, ms: float | None) -> None:
+        """เวลาที่ HUD ใช้วาดต่อครั้ง (งบ ≤ 4 ms — spec M7.6)"""
+        self._hud_draw_ms = ms
 
     def set_config(self, config: Config) -> None:
         """config ที่ปรับสดแล้ว (กรอบ active region ฯลฯ วาดตามค่าใหม่)"""
@@ -270,6 +275,9 @@ class DebugView(QWidget):
             f"FPS {packet.fps:5.1f}   latency {packet.process_ms:5.1f} ms   "
             f"hands {len(hands.hands)}"
         )
+        if self._hud_draw_ms is not None:
+            over = "  ⚠" if self._hud_draw_ms > 4.0 else ""
+            line1 += f"   HUD draw {self._hud_draw_ms:4.1f} ms{over}"
         details = [self._camera_info or f"{hands.width}x{hands.height}"]
         details.append("mirror on" if cfg.camera.mirror else "mirror off")
         details.append(f"dominant {cfg.tracking.dominant_hand}")

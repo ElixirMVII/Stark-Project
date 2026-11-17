@@ -172,7 +172,9 @@ def _run(overlay: HudOverlay, seconds: float = 0.4) -> None:
 def test_secondary_overlay_has_no_panels_and_no_boot(theme):
     overlay = _overlay(theme, RIGHT, panels=False)
     assert overlay.screen_geometry == RIGHT.geometry
-    assert set(overlay._elements) == {"boot", "radial", "charge", "launcher", "target", "reticle"}
+    assert set(overlay._elements) == {
+        "boot", "streak", "collapse", "radial", "charge", "launcher", "target", "particles", "reticle"
+    }  # fmt: skip
     overlay.start()
     assert not overlay._boot.active(overlay._clock.t)  # boot เล่นเฉพาะจอหลัก
     overlay.set_alert("CAMERA LOST")  # ไม่มีป้ายสถานะ: ต้องไม่ error

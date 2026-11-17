@@ -293,16 +293,25 @@ def test_reticle_fades_in_and_out_with_hand(theme):
     assert reticle.alpha == 0.0 and reticle.rect().isEmpty()
 
 
-def test_reticle_spins_only_when_armed(theme):
+def test_reticle_spins_fast_when_armed_and_very_slowly_when_disarmed(theme):
     armed, disarmed = Reticle(theme), Reticle(theme)
     armed.set_state(QPointF(0, 0), snapshot(), 0.0)
     disarmed.set_state(QPointF(0, 0), snapshot(State.DISARMED, armed=False), 0.0)
-    for r in (armed, disarmed):
+    turned = {}
+    for name, r in (("armed", armed), ("disarmed", disarmed)):
         r.advance(0.0)
-        for i in range(1, 11):
+        for i in range(1, 31):  # 3 วินาที: spring ของการหมุนเข้าที่แล้ว
             r.advance(i * 0.1)
-    assert armed._angle == pytest.approx(reticle_module.SPIN_DEG_PER_S, rel=0.01)
-    assert disarmed._angle == 0.0
+        before = r._angles[1]
+        for i in range(31, 41):
+            r.advance(i * 0.1)
+        turned[name] = (r._angles[1] - before) % 360.0
+    pointer, idle = (
+        reticle_module.MODES["POINTER"].arcs.spin,
+        reticle_module.MODES["DISARMED"].arcs.spin,
+    )
+    assert turned["armed"] == pytest.approx(pointer, rel=0.05)
+    assert turned["disarmed"] == pytest.approx(idle, rel=0.05) and idle < pointer / 3
 
 
 def test_shockwave_expands_and_expires(theme):
@@ -444,14 +453,9 @@ def test_panels_can_be_disabled(qapp, theme):
     config = parse_config({"hud": {"show_telemetry": False, "show_radar": False}})
     overlay = HudOverlay(config, FHD, theme=theme, sampler=FakeSampler())
     assert set(overlay._elements) == {
-        "boot",
-        "badge",
-        "radial",
-        "charge",
-        "launcher",
-        "target",
-        "reticle",
-    }
+        "boot", "badge", "streak", "collapse", "radial", "charge", "launcher", "target",
+        "particles", "reticle",
+    }  # fmt: skip
     overlay.start(boot=False)
     overlay.show_packet(packet(snapshot()))
     render(overlay)
@@ -766,7 +770,8 @@ def test_reticle_paints_zoom_mode_inside_its_rect(theme):
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     reticle.paint(painter, 1.0)
     painter.end()
-    assert image.pixelColor(150 + 15, 150).alpha() > 150  # หัวลูกศรแนวนอน
+    assert reticle.mode == "ZOOM"
+    assert image.pixelColor(150 + 61, 150).alpha() > 100  # หัวลูกศรแนวนอน (ปลายที่ 62 px)
     _assert_paints_inside_rect(reticle, image)
 
 

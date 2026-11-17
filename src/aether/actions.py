@@ -30,6 +30,7 @@ __all__ = [
     "PynputBackend",
     "create_backend",
     "double_click_time_ms",
+    "foreground_minimizable_rect",
     "foreground_window",
     "glide_offset",
     "keep_on_screen",
@@ -313,6 +314,17 @@ def minimize_foreground_window() -> bool:
     return True
 
 
+def foreground_minimizable_rect() -> tuple[int, int, int, int] | None:
+    """สี่เหลี่ยม (left, top, right, bottom) ของหน้าต่าง active ที่ย่อได้ — อ่านอย่างเดียว ไม่ย่อ
+
+    HUD ใช้วาดกรอบยุบลง taskbar ตอนย่อหน้าต่าง (ต้องอ่านก่อนย่อ หลังย่อแล้วตำแหน่งจะเป็น -32000)
+    """
+    target = foreground_window()
+    if target is None or not should_minimize(target[1]):
+        return None
+    return win32_window_rect(target[0])
+
+
 class PynputBackend:
     """เมาส์/คีย์บอร์ดจริงผ่าน pynput (บน Windows คือ SetCursorPos + SendInput)"""
 
@@ -436,6 +448,8 @@ class ActionExecutor:
         self._backend = backend
         self._launcher = tuple(launcher)
         self._grabbed: int | None = None  # หน้าต่างที่ถืออยู่ (✊ ลาก)
+        # กรอบของหน้าต่างที่เพิ่งสั่งย่อ (อ่านก่อนย่อ) — HUD ใช้วาดกรอบยุบลง taskbar (M7)
+        self.last_minimized_rect: tuple[int, int, int, int] | None = None
         self._pressed: set[str] = set()
         self._keys_down: list[str] = []
         self._actions: dict[str, Hotkey | str] = {
@@ -521,6 +535,10 @@ class ActionExecutor:
         if action is None or action == "none":
             log.debug("no action bound to %s", name)
         elif action == "minimize_foreground":
+            try:
+                self.last_minimized_rect = foreground_minimizable_rect()
+            except Exception:  # noqa: BLE001 — แค่ใช้วาด effect: อ่านไม่ได้ก็ย่อต่อได้
+                self.last_minimized_rect = None
             self._backend.minimize_foreground()
         elif isinstance(action, Hotkey):
             self._with_keys(action.keys, lambda: None)  # กดครบแล้วปล่อย = กดปุ่มลัดหนึ่งครั้ง

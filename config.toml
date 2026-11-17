@@ -62,6 +62,8 @@ show_telemetry = true
 show_radar = true
 sounds = true
 volume = 0.5
+reduce_motion = false   # true = ปิด particle, การหายใจ และแอนิเมชันตอนบูต (เหลือแค่ fade)
+quality = "high"        # "low" = ไม่มี glow ชั้นนอก และ particle ครึ่งเดียว (เครื่องช้า)
 
 [launcher]
 # ค้าง 👍 (Thumb_Up) เพื่อเปิดเมนูวงกลมรอบเคอร์เซอร์ → ขยับมือไปทางช่องที่ต้องการ → จีบนิ้วเพื่อเปิด

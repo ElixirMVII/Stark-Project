@@ -458,3 +458,34 @@ spec ระบุ "เทรนท่าเองด้วย MediaPipe Model Ma
 - Privacy: ชื่อ element อยู่ใน `Target.name` ใช้แสดงบน HUD เท่านั้น — flight recorder เก็บแค่ HandFrame/state/event
   (ไม่มี snapshot) และ log/debug ใช้ `Target.describe()` (ชนิด + ขนาด)
 - ยังไม่ได้วัดจริง: อัตราติดของปุ่ม X/taskbar (เกณฑ์ 9/10), p95 latency ที่เพิ่ม, CPU ของ Chrome ตอนเปิด targeting
+- **ผลจาก CI (windows-latest, run #15–16):** `test_uia_sees_through_the_click_through_overlay` ผ่าน — UIA
+  (`ElementFromPoint`) **ทะลุ** หน้าต่างที่มี ex-style เดียวกับ overlay ของ HUD และเจอปุ่มที่อยู่ข้างใต้; ปุ่ม Win32 จริง
+  ถูกอ่านเป็น `ButtonControl` พร้อมสี่เหลี่ยม/pid ถูกต้อง; `aether.exe` ที่ build ได้รายงาน "UI Automation ใช้ได้"
+
+### D45 · M7 ขัด animation (และ M8 ยังไม่ทำ)
+- `hud/anim.py` `SecondOrderDynamics` ตามสูตรของ spec, clamp `dt` ≤ 1/30 และใช้ k2 ที่เสถียรเสมอ (test ด้วย dt สุ่ม
+  ถึง 5 วินาที) · preset `snappy`/`soft`/`bouncy` และ duration token ตาม spec
+- reticle เขียนใหม่เป็น 3 ชั้น (`Ring`: radius, thickness, span, alpha, dash, spin) + ยืด x/y + สีเน้น ทุกโหมดเป็น
+  ชุดค่าใน `MODES` ค่าทั้งหมดเป็นเวกเตอร์เดียววิ่งด้วย spring `MORPH = (f 6.5, ζ 0.9)` — **เร็วกว่า `snappy`**
+  เพราะ snappy (f 4) ใช้เวลาเข้าที่เกิน 250 ms ที่ spec ตั้งเป็นเกณฑ์ (test ตรวจทุกคู่โหมด 42 คู่ว่าเข้าที่ใน ≤ 250 ms)
+- **ตำแหน่งของ reticle ไม่ใช้ spring** แม้ spec จะเขียนว่า snappy ใช้กับ "reticle ตามเคอร์เซอร์": วัดแล้ว snappy (r=0)
+  ตามหลังเคอร์เซอร์ ~56 px ตอนขยับ 1000 px/s, ถ้าใส่ r=2 ให้ไม่ตามหลังก็เด้งเลยเคอร์เซอร์ ~20 px ตอนหยุด — ทั้งสองแบบทำให้
+  reticle ไม่ตรงกับเคอร์เซอร์จริง (ผิดเกณฑ์ M2) และตำแหน่งที่ส่งมาผ่าน One Euro filter แล้ว จึงนิ่งพออยู่แล้ว
+  (test: มือนิ่ง = ตำแหน่ง/ขนาด/รูปร่างนิ่ง) ใช้ `snappy` กับระดับการจีบที่แสดงแทน และ `bouncy` กับจังหวะคลิก
+  (reticle หดเหลือ 0.82 แล้วเด้งกลับ) ตาม spec "bouncy … ตอนคลิก"
+- ความลึกใช้ `hand_size` = ระยะข้อมือ→โคนนิ้วกลางในภาพ ÷ ความกว้างเฟรม (ส่งมาใน `EngineSnapshot`) ไม่ใช้ z
+  ช่วง 0.10–0.22 → ขนาด 0.85–1.25× ผ่าน spring `soft`
+- กรอบที่ต้องวาดใหม่ของ reticle คิดจากค่าปัจจุบัน (ไม่ใช่กรณีใหญ่สุดเสมอ) — POINTER ยังวาดแค่บริเวณเล็กเท่าเดิม
+- อนุภาค: pool 150 ตัวสร้างครั้งเดียว (test ตรวจว่า id ของ object ไม่เปลี่ยน), อายุ 0.4 วินาที, 14 ตัวต่อคลิก (low = 7)
+- แสงปัดวาดทั้ง viewport ราว 0.4 วินาที (ยอมรับต้นทุนช่วงสั้นๆ) · กรอบหน้าต่างยุบ: `ActionExecutor` อ่าน
+  `GetWindowRect` **ก่อน** ย่อ (หลังย่อตำแหน่งเป็น -32000) เก็บไว้ใน `last_minimized_rect` ให้ HUD — ตอน dry-run
+  ก็อ่านได้ (อ่านอย่างเดียว) จึงเห็น effect เมื่อทดสอบด้วย `--source mouse`
+- Boot v2: ข้อความ "ถอดรหัส" สุ่มแบบ deterministic ตามเวลา, แผง telemetry สไลด์เข้า · `reduce_motion` = ข้อความ fade อย่างเดียว
+- `hud.quality = "low"` ตัด glow ชั้นนอก (ชั้นที่แพงที่สุด) ทั้ง process ผ่าน `theme.set_glow_quality`
+- เสียงสลับ: `convert_sounds.py` สร้าง `<ชื่อ>_2.wav`, `_3.wav` จากไฟล์ในชุด Kenney เดิม (ไม่มีก็ข้าม),
+  `SoundPlayer` สุ่มไม่ซ้ำแบบเดิมติดกัน; เสียงเล่นใน handler เดียวกับ effect ภาพ จึงตรงจังหวะกัน
+- เวลาวาดวัดด้วย `QElapsedTimer` ใน `paintEvent` (EMA) แสดงในหน้าต่าง debug — วัดในเครื่อง dev (Linux, offscreen,
+  ไม่มี GPU): บริเวณ reticle POINTER ~1.4 ms, ลาก ~2.3 ms, โหมดปัด (มีป้าย 4 ทิศ) ~4.1 ms; `quality = "low"` 0.8 / 1.4 / 3.1 ms
+- **M8 (GPU HUD) ยังไม่ทำ** — spec ให้ทำเมื่อ M7 วาดเกิน 4 ms ต่อเฟรมหรืออยากได้ bloom; ตัวเลขข้างบนอยู่ในงบเกือบทั้งหมด
+  บนเครื่องที่ช้ากว่า i5 ทั่วไป และ spike ของ Qt Quick ต้องลองบน GPU/Windows จริงซึ่งทำใน CI ไม่ได้ (runner ไม่มี GPU)
+  ถ้าผู้ใช้เห็น `HUD draw` เกิน 4 ms: ลอง `quality = "low"` ก่อน แล้วค่อยทำ spike ของ M8
