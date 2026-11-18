@@ -257,6 +257,7 @@ class GestureEngine:
             config.targeting.snap_strength, config.targeting.escape_speed * screen.width
         )
         self._raw_cursor: tuple[int, int] | None = None
+        self._idle_since = 0  # เวลาล่าสุดที่เห็นมือข้างถนัด (หรือที่เพิ่ง ARM) — สำหรับ DISARM อัตโนมัติ
         self._double_click_ms = double_click_ms
         self._double_click_radius = max(32.0, 0.03 * screen.height)
 
@@ -356,14 +357,18 @@ class GestureEngine:
         if not config.targeting.enabled:
             self._target = None
 
-    def set_armed(self, armed: bool) -> list[GestureEvent]:
-        """เปลี่ยนสถานะ ARM/DISARM คืน event ที่ต้องทำ (เช่นปล่อยปุ่มที่กดค้าง)"""
+    def set_armed(self, armed: bool, *, reason: str = "") -> list[GestureEvent]:
+        """เปลี่ยนสถานะ ARM/DISARM คืน event ที่ต้องทำ (เช่นปล่อยปุ่มที่กดค้าง)
+
+        ``reason`` ติดไปกับ event ``DISARMED`` (เช่น ``"idle"`` = DISARM อัตโนมัติเพราะไม่เห็นมือนาน)
+        """
         if armed == self._armed:
             return []
         events: list[GestureEvent] = []
         if armed:
             self._armed = True
             self._state = State.IDLE
+            self._idle_since = self._now
             events.append(GestureEvent(EventKind.ARMED))
         else:
             if self._state is State.DRAGGING:
@@ -372,7 +377,7 @@ class GestureEngine:
                 events.append(GestureEvent(EventKind.WINDOW_RELEASE, reason="disarm"))
             self._armed = False
             self._state = State.DISARMED
-            events.append(GestureEvent(EventKind.DISARMED))
+            events.append(GestureEvent(EventKind.DISARMED, reason=reason))
         # ไม่ล้างผลโหวตท่าและตัวกันท่าค้าง: ท่าที่มือทำอยู่ไม่ได้เปลี่ยนเพราะสถานะ ARM เปลี่ยน
         # (สำคัญตอนสลับด้วย 🤟 — ถ้าล้าง ท่าที่ยังค้างอยู่จะสลับกลับเองทันที)
         self._reset_tracking(pose_released=False)
@@ -399,11 +404,19 @@ class GestureEngine:
         metrics: _Metrics | None = None
         if hand is None:
             self._hand_missing(now, events)
+            self._check_idle(now, events)
         else:
+            self._idle_since = now
             metrics = self._measure(hand, frame, now)
             self._hand_present(hand, other, metrics, frame, now, events)
         self._snapshot = self._make_snapshot(frame, metrics, now)
         return self._state, events
+
+    def _check_idle(self, now: int, events: list[GestureEvent]) -> None:
+        """ARMED แต่ไม่เห็นมือนานเกิน ``safety.auto_disarm_minutes`` → DISARM เอง (ลืมปิดแล้วเดินไป)"""
+        minutes = self._cfg.safety.auto_disarm_minutes
+        if self._armed and minutes > 0 and now - self._idle_since >= minutes * 60_000:
+            events.extend(self.set_armed(False, reason="idle"))
 
     def tick(self, now_ms: int) -> list[GestureEvent]:
         """ไม่มีเฟรมเข้ามา (กล้องค้าง/หลุด): เดินเวลาเหมือนได้เฟรมที่ไม่มีมือ เพื่อให้กติกา "มือหาย" ทำงาน"""

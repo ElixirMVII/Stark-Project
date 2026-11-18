@@ -7,6 +7,7 @@ width = 640
 height = 480
 fps = 30
 mirror = true               # flip แนวนอนเหมือนส่องกระจก (แนะนำให้เปิดไว้)
+low_light = 40              # ภาพมืดกว่านี้ (0–255) นานเกิน 3 วินาที = HUD เตือน LOW LIGHT (0 = ปิด)
 
 [tracking]
 dominant_hand = "right"     # "left" | "right"
@@ -95,3 +96,6 @@ escape_speed = 2.5          # ขยับมือเร็วกว่าน�
 max_size = [480, 160]       # logical px: ปุ่ม/รายการที่ใหญ่กว่านี้ไม่ดูด (เช่นพื้นที่ข้อความ)
 show_label = true           # ป้าย "BUTTON · Save" ใต้กรอบ
 app_blocklist = []          # โปรแกรมที่ไม่ต้องหาเป้า เช่น ["game.exe"]
+
+[safety]
+auto_disarm_minutes = 10   # ARMED แต่ไม่เห็นมือนานเท่านี้ = DISARM เอง (ลืมปิดแล้วลุกไป) · 0 = ปิด

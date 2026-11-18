@@ -52,6 +52,7 @@ class Tray(QObject):
     toggle_arm_requested = Signal()
     debug_requested = Signal(bool)
     calibrate_requested = Signal()
+    pause_requested = Signal(bool)  # True = พักกล้อง
     poses_requested = Signal()
     reload_requested = Signal()
     quit_requested = Signal()
@@ -64,6 +65,9 @@ class Tray(QObject):
         self._menu = QMenu()
         self._arm_action = QAction(self._menu)
         self._arm_action.triggered.connect(self.toggle_arm_requested)
+        self._pause_action = QAction("พักกล้อง (ให้โปรแกรมอื่นใช้)", self._menu)
+        self._pause_action.setCheckable(True)
+        self._pause_action.toggled.connect(self.pause_requested)
         self._debug_action = QAction("หน้าต่าง Debug", self._menu)
         self._debug_action.setCheckable(True)
         self._debug_action.toggled.connect(self.debug_requested)
@@ -77,6 +81,7 @@ class Tray(QObject):
         self._quit_action.triggered.connect(self.quit_requested)
 
         self._menu.addAction(self._arm_action)
+        self._menu.addAction(self._pause_action)
         self._menu.addSeparator()
         self._menu.addAction(self._debug_action)
         self._menu.addAction(self._calibrate_action)
@@ -104,6 +109,7 @@ class Tray(QObject):
     def actions(self) -> dict[str, QAction]:
         return {
             "arm": self._arm_action,
+            "pause": self._pause_action,
             "debug": self._debug_action,
             "calibrate": self._calibrate_action,
             "poses": self._poses_action,
@@ -127,6 +133,12 @@ class Tray(QObject):
         self._icon.setIcon(make_icon(color, armed))
         self._icon.setToolTip(f"AETHER — {'ARMED' if armed else 'DISARMED'}")
         self._arm_action.setText("Disarm (หยุดคุมด้วยมือ)" if armed else "Arm (เริ่มคุมด้วยมือ)")
+
+    def set_paused_checked(self, paused: bool) -> None:
+        """ตั้งเครื่องหมายถูกของเมนูพักกล้องโดยไม่ส่ง signal กลับ"""
+        blocked = self._pause_action.blockSignals(True)
+        self._pause_action.setChecked(paused)
+        self._pause_action.blockSignals(blocked)
 
     def set_debug_checked(self, checked: bool) -> None:
         """ตั้งเครื่องหมายถูกของเมนู Debug โดยไม่ส่ง signal กลับ"""

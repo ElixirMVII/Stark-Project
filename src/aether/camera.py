@@ -23,6 +23,7 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 from .config import CameraConfig
+from .health import frame_brightness
 from .pipeline import FrameResult
 from .tracker import HandFrame
 
@@ -149,6 +150,7 @@ class FramePacket:
     captured_at: float  # time.perf_counter() ตอนได้เฟรมจากกล้อง
     process_ms: float  # เวลาตั้งแต่ได้เฟรมจนส่ง input ให้ OS เสร็จ (latency เฟรม→input)
     fps: float
+    brightness: float | None = None  # ความสว่างเฉลี่ยของภาพ 0–255 (None = แหล่งจำลอง ไม่มีภาพ)
 
 
 class CameraThread(QThread):
@@ -251,6 +253,7 @@ class CameraThread(QThread):
                     captured_at=captured_at,
                     process_ms=(done_at - captured_at) * 1000.0,
                     fps=meter.tick(captured_at),
+                    brightness=None if isinstance(frame, HandFrame) else frame_brightness(frame),
                 )
             )
         return False

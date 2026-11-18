@@ -426,3 +426,16 @@ def test_foreground_and_window_info_are_read(native_button):
         assert foreground is None or isinstance(foreground.fullscreen, bool)
     finally:
         backend.close()
+
+
+# ---- ใช้ทุกวันได้ --------------------------------------------------------- #
+
+
+def test_webcam_users_reads_the_privacy_store_without_errors():
+    """อ่าน ConsentStore ของ Windows ได้ (CI ไม่มีกล้อง: ได้ list ว่างหรือรายชื่อ แต่ต้องไม่ error)"""
+    from aether.health import _read_consent_store, webcam_users
+
+    entries = _read_consent_store()
+    assert isinstance(entries, list)
+    users = webcam_users()
+    assert isinstance(users, list) and all(isinstance(u, str) and u for u in users)

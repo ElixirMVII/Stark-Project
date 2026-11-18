@@ -46,6 +46,7 @@ from .config import (
 )
 from .debug_view import DebugView
 from .gestures import EventKind, GestureEngine, GestureEvent
+from .health import LightMonitor, webcam_users
 from .hotkeys import HotkeyManager, parse_hotkey
 from .hud.overlay import HudGroup, HudOverlay
 from .hud.theme import Theme
@@ -97,6 +98,7 @@ class AetherApp(QObject):
     """เป็นเจ้าของ pipeline, worker thread, hotkey, HUD และหน้าต่าง debug ของ config หนึ่งชุด"""
 
     gesture_events = Signal(object)  # tuple[GestureEvent, ...] ที่ไม่ใช่การขยับเคอร์เซอร์
+    camera_paused_changed = Signal(bool)
     incident_saved = Signal(object)  # Path ของไฟล์ incident ที่เขียนแล้ว (None = เขียนไม่ได้)
     armed_changed = Signal(bool)
     frame_packet = Signal(object)  # FramePacket ล่าสุด (UI thread) — ใช้ป้อน calibration wizard
@@ -172,18 +174,12 @@ class AetherApp(QObject):
         self.incident_saved.connect(self._on_incident_saved)
         self.quit_requested.connect(QApplication.quit)
 
-        self._thread = CameraThread(
-            source or create_source(options.source, config, screen),
-            self._pipeline.process,
-            self,
-            observer=self._observe_packet,
-        )
-        self._thread.frame_ready.connect(self._on_frame_ready)
-        self._thread.camera_opened.connect(self._on_camera_opened)
-        self._thread.camera_error.connect(self._on_camera_error)
-        self._thread.failed.connect(self._on_failed)
+        self._source = source or create_source(options.source, config, screen)
+        self._thread = self._make_camera_thread()
         self._camera_info = ""
         self._camera_message: str | None = None
+        self._camera_paused = False
+        self._light = LightMonitor(config.camera.low_light)
 
         # M6 Target Lock: thread แยกที่ถาม UI Automation (Windows) — ปิดได้ด้วย targeting.enabled
         self._finder: TargetFinder | None = None
@@ -265,6 +261,14 @@ class AetherApp(QObject):
         return self._dry_run
 
     @property
+    def camera_paused(self) -> bool:
+        return self._camera_paused
+
+    @property
+    def light(self) -> LightMonitor:
+        return self._light
+
+    @property
     def finder(self) -> TargetFinder | None:
         return self._finder
 
@@ -277,6 +281,29 @@ class AetherApp(QObject):
         return self._recorder
 
     # ---- control -------------------------------------------------------- #
+
+    def set_camera_paused(self, paused: bool) -> None:
+        """พักกล้อง (ปล่อยกล้องให้โปรแกรมอื่น เช่นตอนเข้าประชุม) / ใช้กล้องต่อ — พักแล้วมือไม่คุมเมาส์"""
+        if paused == self._camera_paused:
+            return
+        self._camera_paused = paused
+        if paused:
+            self._pipeline.set_armed(False)
+            self._thread.stop()
+            self._camera_message = 'พักกล้องอยู่ — เลือก "ใช้กล้องต่อ" ใน tray เพื่อกลับมาใช้'
+            log.info("พักกล้องแล้ว (ปล่อยกล้องให้โปรแกรมอื่นใช้ได้)")
+            if self._hud is not None:
+                self._hud.set_alert("CAMERA PAUSED")
+            if self._debug_view is not None:
+                self._debug_view.show_message(self._camera_message)
+        else:
+            log.info("ใช้กล้องต่อ")
+            self._camera_message = None
+            if self._hud is not None:
+                self._hud.set_alert(None)
+            self._thread = self._make_camera_thread()
+            self._thread.start()
+        self.camera_paused_changed.emit(paused)
 
     def mark_incident(self) -> bool:
         """``Ctrl+Alt+M``: เขียน 5 วินาทีที่ผ่านมาลงไฟล์ (thread แยก — pointer ไม่สะดุด)
@@ -359,7 +386,10 @@ class AetherApp(QObject):
             self._debug_view.tuning.show_status("กลับเป็นค่าเดิมแล้ว")
 
     def toggle_armed(self) -> bool:
-        """สลับ ARM/DISARM (เรียกจาก thread ใดก็ได้ มีผลทันที)"""
+        """สลับ ARM/DISARM (เรียกจาก thread ใดก็ได้ มีผลทันที) — ระหว่างพักกล้อง ARM ไม่ได้"""
+        if self._camera_paused and not self._pipeline.armed:
+            log.info('พักกล้องอยู่ — ยังไม่ ARM (เลือก "ใช้กล้องต่อ" ใน tray ก่อน)')
+            return False
         return self._pipeline.toggle_armed()
 
     def set_debug_visible(self, visible: bool) -> None:
@@ -460,6 +490,16 @@ class AetherApp(QObject):
         )
         return HudGroup(overlays)
 
+    def _make_camera_thread(self) -> CameraThread:
+        thread = CameraThread(
+            self._source, self._pipeline.process, self, observer=self._observe_packet
+        )
+        thread.frame_ready.connect(self._on_frame_ready)
+        thread.camera_opened.connect(self._on_camera_opened)
+        thread.camera_error.connect(self._on_camera_error)
+        thread.failed.connect(self._on_failed)
+        return thread
+
     def _ensure_debug_view(self) -> DebugView:
         if self._debug_view is None:
             view = DebugView(
@@ -493,6 +533,7 @@ class AetherApp(QObject):
         if packet is None:
             return
         self._packet = packet
+        self._check_light(packet)
         if self._hud is not None:
             self._hud.show_packet(packet)
         if self._debug_view is not None and self._debug_view.isVisible():
@@ -509,7 +550,15 @@ class AetherApp(QObject):
                 log.info("ARMED — มือคุมเมาส์แล้ว")
                 self.armed_changed.emit(True)
             elif event.kind is EventKind.DISARMED:
-                log.info("DISARMED")
+                if event.reason == "idle":
+                    minutes = self._config.safety.auto_disarm_minutes
+                    log.info(
+                        "DISARMED เอง — ไม่เห็นมือนาน %g นาที (safety.auto_disarm_minutes)", minutes
+                    )
+                    if self._hud is not None:
+                        self._hud.notify("AUTO DISARM", None)
+                else:
+                    log.info("DISARMED")
                 self.armed_changed.emit(False)
             elif event.kind is EventKind.ACTION:
                 log.info("gesture action: %s", event.name)
@@ -541,11 +590,29 @@ class AetherApp(QObject):
             self._debug_view.set_camera_info(description)
 
     def _on_camera_error(self, message: str) -> None:
+        users = (
+            webcam_users()
+        )  # Windows: โปรแกรมไหนถือกล้องอยู่ (เช่น Teams/Zoom) — แอปลองเปิดใหม่เรื่อยๆ เอง
+        if users:
+            message += f"\nตอนนี้กล้องถูกใช้โดย: {', '.join(users)} — ปิดโปรแกรมนั้นแล้วแอปจะกลับมาใช้กล้องเอง"
+            log.info("กล้องถูกใช้โดย %s", ", ".join(users))
         self._camera_message = message
         if self._hud is not None:
-            self._hud.set_alert("CAMERA LOST")
+            self._hud.set_alert("CAMERA IN USE" if users else "CAMERA LOST")
         if self._debug_view is not None:
             self._debug_view.show_message(message)
+
+    def _check_light(self, packet: FramePacket) -> None:
+        change = self._light.update(packet.brightness, packet.captured_at)
+        if change == "low":
+            log.info(
+                "แสงน้อย (ความสว่าง %.0f/255) — เปิดไฟหรือหันหน้าเข้าหาแสง จะจับมือได้แม่นขึ้น",
+                packet.brightness or 0.0,
+            )
+            if self._hud is not None and self._camera_message is None:
+                self._hud.set_alert("LOW LIGHT")
+        elif change == "ok" and self._hud is not None and self._camera_message is None:
+            self._hud.set_alert(None)
 
     def _on_failed(self, message: str) -> None:
         log.error("pipeline stopped: %s", message)
@@ -634,6 +701,7 @@ class AppController(QObject):
         self._tray: Tray | None = Tray() if tray_ok else None
         if self._tray is not None:
             self._tray.toggle_arm_requested.connect(self._toggle_armed)
+            self._tray.pause_requested.connect(self._set_paused)
             self._tray.debug_requested.connect(self._set_debug)
             self._tray.calibrate_requested.connect(self.open_calibration)
             self._tray.poses_requested.connect(self.open_poses)
@@ -743,18 +811,28 @@ class AppController(QObject):
         options = dataclasses.replace(self._options, debug=self._debug_wanted)
         app = self._app_factory(config, options, self._tray is None, self.load_poses(config))
         app.armed_changed.connect(self._on_armed_changed)
+        app.camera_paused_changed.connect(self._on_paused_changed)
         app.debug_visibility_changed.connect(self._on_debug_visibility)
         app.frame_packet.connect(self._on_frame_packet)
         self._app = app
         if self._tray is not None:
             self._tray.set_primary(config.hud.palette.primary)
             self._tray.set_armed(False)
+            self._tray.set_paused_checked(False)
             self._tray.set_debug_checked(self._debug_wanted)
         app.start(boot=boot)
 
     def _toggle_armed(self) -> None:
         if self._app is not None:
             self._app.toggle_armed()
+
+    def _set_paused(self, paused: bool) -> None:
+        if self._app is not None:
+            self._app.set_camera_paused(paused)
+
+    def _on_paused_changed(self, paused: bool) -> None:
+        if self._tray is not None:
+            self._tray.set_paused_checked(paused)
 
     def _set_debug(self, visible: bool) -> None:
         self._debug_wanted = visible

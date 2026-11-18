@@ -35,6 +35,7 @@ __all__ = [
     "PinchConfig",
     "PointerConfig",
     "PosesConfig",
+    "SafetyConfig",
     "ScrollConfig",
     "TargetingConfig",
     "TrackingConfig",
@@ -101,11 +102,24 @@ class CameraConfig:
     height: int = 480
     fps: int = 30
     mirror: bool = True
+    low_light: int = 40  # ความสว่างเฉลี่ยของภาพ (0–255) ต่ำกว่านี้นานๆ = เตือน "แสงน้อย" (0 = ปิด)
 
     def __post_init__(self) -> None:
         _require(self.index >= 0, "camera.index ต้อง ≥ 0")
         _require(self.width > 0 and self.height > 0, "camera.width/height ต้อง > 0")
         _require(0 < self.fps <= 240, "camera.fps ต้องอยู่ในช่วง 1–240")
+        _require(0 <= self.low_light <= 200, "camera.low_light ต้องอยู่ในช่วง 0–200")
+
+
+@dataclass(frozen=True, slots=True)
+class SafetyConfig:
+    auto_disarm_minutes: float = 10.0  # ARMED แต่ไม่เห็นมือนานเท่านี้ = DISARM เอง (0 = ปิด)
+
+    def __post_init__(self) -> None:
+        _require(
+            0.0 <= self.auto_disarm_minutes <= 240.0,
+            "safety.auto_disarm_minutes ต้องอยู่ในช่วง 0–240 (0 = ปิด)",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,6 +384,7 @@ class Config:
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
     poses: PosesConfig = field(default_factory=PosesConfig)
     targeting: TargetingConfig = field(default_factory=TargetingConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
 
 
 # --------------------------------------------------------------------------- #

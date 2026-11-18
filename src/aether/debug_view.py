@@ -280,6 +280,8 @@ class DebugView(QWidget):
             line1 += f"   HUD draw {self._hud_draw_ms:4.1f} ms{over}"
         details = [self._camera_info or f"{hands.width}x{hands.height}"]
         details.append("mirror on" if cfg.camera.mirror else "mirror off")
+        if packet.brightness is not None:
+            details.append(f"light {packet.brightness:.0f}")
         details.append(f"dominant {cfg.tracking.dominant_hand}")
         if self._dry_run:
             details.append("DRY-RUN")
