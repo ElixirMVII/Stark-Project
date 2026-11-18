@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -37,6 +38,7 @@ __all__ = [
     "launch_target",
     "minimize_foreground_window",
     "should_minimize",
+    "throw_destination",
 ]
 
 log = logging.getLogger(__name__)
@@ -54,6 +56,10 @@ _SWP_MOVE_ONLY = 0x0001 | 0x0004 | 0x0010  # SWP_NOSIZE | SWP_NOZORDER | SWP_NOA
 
 THROW_GLIDE_S = 0.25  # หน้าต่างที่ถูกโยนไหลต่อเท่ากับความเร็วตอนปล่อย × เวลานี้
 THROW_KEEP_VISIBLE = 120  # หลังโยนต้องเหลือส่วนของหน้าต่างบนจออย่างน้อยเท่านี้ (px) ทั้งสองแกน
+THROW_MONITOR_SPEED = 3500.0  # โยนเร็วกว่านี้ (px/s) ไปทางจอข้างๆ = ย้ายหน้าต่างไปจอนั้น
+THROW_AXIS_RATIO = 1.5  # แกนหลักของการโยนต้องเร็วกว่าแกนรองอย่างน้อยเท่านี้จึงนับว่า "ไปทางจอนั้น"
+
+Rect = tuple[int, int, int, int]  # left, top, right, bottom (physical px)
 
 
 class InputBackend(Protocol):
@@ -130,7 +136,10 @@ class DryRunBackend:
         log.debug("[dry-run] move window %+d %+d", dx, dy)
 
     def throw_window(self, handle: int, vx: int, vy: int) -> None:
-        log.info("[dry-run] throw window at %+d %+d px/s", vx, vy)
+        if math.hypot(vx, vy) >= THROW_MONITOR_SPEED:
+            log.info("[dry-run] throw window at %+d %+d px/s (ไปจอข้างๆ ถ้ามี)", vx, vy)
+        else:
+            log.info("[dry-run] throw window at %+d %+d px/s", vx, vy)
 
 
 def launch_target(target: str, args: str = "") -> None:
@@ -149,6 +158,62 @@ def launch_target(target: str, args: str = "") -> None:
 def glide_offset(vx: float, vy: float) -> tuple[int, int]:
     """ระยะที่หน้าต่างไหลต่อหลังโยน (px)"""
     return (round(vx * THROW_GLIDE_S), round(vy * THROW_GLIDE_S))
+
+
+def throw_destination(
+    rect: Rect, vx: float, vy: float, monitors: Sequence[Rect]
+) -> tuple[int, int] | None:
+    """โยนแรงไปทางจอข้างๆ → ระยะ (dx, dy) ที่ย้ายหน้าต่างไปจอนั้น (ตำแหน่งสัมพัทธ์บนจอเท่าเดิม)
+
+    คืน ``None`` ถ้าโยนไม่แรงพอ ทิศไม่ชัด หรือไม่มีจอทางนั้น (ใช้การไหลต่อแบบเดิมแทน)
+    ``rect`` และ ``monitors`` เป็น (left, top, right, bottom) — เลือกจอที่อยู่ทางนั้นและใกล้ที่สุด
+    """
+    speed = math.hypot(vx, vy)
+    if speed < THROW_MONITOR_SPEED or len(monitors) < 2:
+        return None
+    if abs(vx) >= abs(vy) * THROW_AXIS_RATIO:
+        axis = 0
+    elif abs(vy) >= abs(vx) * THROW_AXIS_RATIO:
+        axis = 1
+    else:
+        return None
+    sign = 1 if (vx if axis == 0 else vy) > 0 else -1
+    left, top, right, bottom = rect
+
+    def overlap(a: Rect) -> int:
+        w = min(a[2], right) - max(a[0], left)
+        h = min(a[3], bottom) - max(a[1], top)
+        return max(w, 0) * max(h, 0)
+
+    current = max(monitors, key=overlap)
+    if overlap(current) == 0:
+        return None
+    ccx, ccy = (current[0] + current[2]) / 2, (current[1] + current[3]) / 2
+    candidates = []
+    for m in monitors:
+        if m == current:
+            continue
+        mcx, mcy = (m[0] + m[2]) / 2, (m[1] + m[3]) / 2
+        along = (mcx - ccx) if axis == 0 else (mcy - ccy)
+        if along * sign <= 0:
+            continue
+        # จอต้องอยู่ "ข้างๆ" จริง: ช่วงของแกนรองซ้อนกับจอปัจจุบัน
+        lo, hi = (1, 3) if axis == 0 else (0, 2)
+        if min(m[hi], current[hi]) - max(m[lo], current[lo]) <= 0:
+            continue
+        candidates.append((abs(along), m))
+    if not candidates:
+        return None
+    target = min(candidates, key=lambda c: c[0])[1]
+    width, height = right - left, bottom - top
+    cur_w, cur_h = current[2] - current[0], current[3] - current[1]
+    t_w, t_h = target[2] - target[0], target[3] - target[1]
+    rel_x = (left - current[0]) / max(cur_w - width, 1) if cur_w > width else 0.0
+    rel_y = (top - current[1]) / max(cur_h - height, 1) if cur_h > height else 0.0
+    rel_x, rel_y = min(max(rel_x, 0.0), 1.0), min(max(rel_y, 0.0), 1.0)
+    new_left = target[0] + round(rel_x * max(t_w - width, 0))
+    new_top = target[1] + round(rel_y * max(t_h - height, 0))
+    return (new_left - left, new_top - top)
 
 
 def keep_on_screen(
@@ -262,6 +327,19 @@ def win32_virtual_screen() -> tuple[int, int, int, int]:
         left + metrics(78),
         top + metrics(79),
     )  # SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN
+
+
+def _monitor_rects() -> list[Rect]:
+    """(left, top, right, bottom) ของทุกจอ (physical px) — ว่างถ้าอ่านไม่ได้"""
+    try:
+        from .mapping import list_monitors
+
+        return [
+            (g.left, g.top, g.left + g.width, g.top + g.height)
+            for g in (m.geometry for m in list_monitors())
+        ]
+    except Exception:  # noqa: BLE001 — โยนแบบเดิม (ไหลต่อ) ได้เสมอ
+        return []
 
 
 def should_minimize(window_class: str) -> bool:
@@ -381,6 +459,12 @@ class PynputBackend:
     def throw_window(self, handle: int, vx: int, vy: int) -> None:
         rect = win32_window_rect(handle)
         if rect is None:
+            return
+        monitors = _monitor_rects()
+        jump = throw_destination(rect, vx, vy, monitors)
+        if jump is not None:
+            log.info("โยนหน้าต่างไปจอข้างๆ (%+d, %+d px)", *jump)
+            win32_move_window(handle, *jump)
             return
         dx, dy = keep_on_screen(rect, *glide_offset(vx, vy), win32_virtual_screen())
         win32_move_window(handle, dx, dy)
