@@ -103,12 +103,17 @@ class CameraConfig:
     fps: int = 30
     mirror: bool = True
     low_light: int = 40  # ความสว่างเฉลี่ยของภาพ (0–255) ต่ำกว่านี้นานๆ = เตือน "แสงน้อย" (0 = ปิด)
+    battery_fps: int = 15  # ตอนใช้แบตเตอรี่ ประมวลผลไม่เกินกี่เฟรมต่อวินาที (0 = ไม่ลด)
 
     def __post_init__(self) -> None:
         _require(self.index >= 0, "camera.index ต้อง ≥ 0")
         _require(self.width > 0 and self.height > 0, "camera.width/height ต้อง > 0")
         _require(0 < self.fps <= 240, "camera.fps ต้องอยู่ในช่วง 1–240")
         _require(0 <= self.low_light <= 200, "camera.low_light ต้องอยู่ในช่วง 0–200")
+        _require(
+            self.battery_fps == 0 or 5 <= self.battery_fps <= 60,
+            "camera.battery_fps ต้องเป็น 0 (ไม่ลด) หรืออยู่ในช่วง 5–60",
+        )
 
 
 @dataclass(frozen=True, slots=True)

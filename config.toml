@@ -8,6 +8,7 @@ height = 480
 fps = 30
 mirror = true               # flip แนวนอนเหมือนส่องกระจก (แนะนำให้เปิดไว้)
 low_light = 40              # ภาพมืดกว่านี้ (0–255) นานเกิน 3 วินาที = HUD เตือน LOW LIGHT (0 = ปิด)
+battery_fps = 15            # ตอนใช้แบตเตอรี่ ประมวลผลไม่เกินเท่านี้ fps (ประหยัดไฟ) · 0 = ไม่ลด
 
 [tracking]
 dominant_hand = "right"     # "left" | "right"

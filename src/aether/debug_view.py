@@ -64,6 +64,7 @@ class DebugView(QWidget):
         self._armed = False
         self._camera_info = ""
         self._hud_draw_ms: float | None = None
+        self._battery_fps: int | None = None
         self._message: str | None = "กำลังเปิดกล้อง…"
         self._connections = hand_connections()
         self._primary = QColor(config.hud.palette.primary)
@@ -106,6 +107,9 @@ class DebugView(QWidget):
     def set_hud_draw_ms(self, ms: float | None) -> None:
         """เวลาที่ HUD ใช้วาดต่อครั้ง (งบ ≤ 4 ms — spec M7.6)"""
         self._hud_draw_ms = ms
+
+    def set_battery_fps(self, fps: int | None) -> None:
+        self._battery_fps = fps
 
     def set_config(self, config: Config) -> None:
         """config ที่ปรับสดแล้ว (กรอบ active region ฯลฯ วาดตามค่าใหม่)"""
@@ -282,6 +286,8 @@ class DebugView(QWidget):
         details.append("mirror on" if cfg.camera.mirror else "mirror off")
         if packet.brightness is not None:
             details.append(f"light {packet.brightness:.0f}")
+        if self._battery_fps:
+            details.append(f"battery saver {self._battery_fps} fps")
         details.append(f"dominant {cfg.tracking.dominant_hand}")
         if self._dry_run:
             details.append("DRY-RUN")

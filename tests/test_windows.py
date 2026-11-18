@@ -439,3 +439,17 @@ def test_webcam_users_reads_the_privacy_store_without_errors():
     assert isinstance(entries, list)
     users = webcam_users()
     assert isinstance(users, list) and all(isinstance(u, str) and u for u in users)
+
+
+def test_autostart_writes_and_removes_the_run_value():
+    """HKCU\\...\\Run ของผู้ใช้ (ไม่ต้อง admin) — ใช้ชื่อทดสอบแยก ไม่แตะค่าจริงของ AETHER"""
+    from aether.autostart import AutoStart, WinRegistry, launch_command
+
+    registry = WinRegistry()
+    auto = AutoStart(registry, name="AETHER-ci-test")
+    try:
+        auto.set_enabled(True)
+        assert registry.get("AETHER-ci-test") == launch_command() and auto.enabled()
+    finally:
+        auto.set_enabled(False)
+    assert registry.get("AETHER-ci-test") is None and not auto.enabled()

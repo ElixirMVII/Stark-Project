@@ -33,6 +33,7 @@ __all__ = [
     "FpsMeter",
     "FramePacket",
     "FrameSource",
+    "FrameThrottle",
     "OpenCVCamera",
 ]
 
@@ -141,6 +142,31 @@ class FpsMeter:
         return (len(self._times) - 1) / span if span > 0 else 0.0
 
 
+class FrameThrottle:
+    """จำกัดจำนวนเฟรมที่ประมวลผลต่อวินาที (โหมดประหยัดแบต) — เฟรมที่เกินถูกอ่านแล้วทิ้ง ไม่ส่งเข้า tracker
+
+    ส่วนที่กิน CPU คือ MediaPipe ไม่ใช่การอ่านกล้อง อ่านทิ้งต่อไปทำให้ภาพไม่ค้างเก่าใน buffer ของ driver
+    """
+
+    def __init__(self, max_fps: float | None = None) -> None:
+        self._interval = 1.0 / max_fps if max_fps else 0.0
+        self._last: float | None = None
+
+    @property
+    def max_fps(self) -> float | None:
+        return 1.0 / self._interval if self._interval else None
+
+    def set_max_fps(self, max_fps: float | None) -> None:
+        self._interval = 1.0 / max_fps if max_fps else 0.0
+
+    def should_process(self, now: float) -> bool:
+        # เผื่อ 10% ให้กล้องที่ส่งภาพไม่สม่ำเสมอ (เช่น 30 fps → 15 ต้องได้ทุก 2 เฟรม ไม่ใช่ทุก 3)
+        if self._interval and self._last is not None and now - self._last < self._interval * 0.9:
+            return False
+        self._last = now
+        return True
+
+
 @dataclass(frozen=True, slots=True)
 class FramePacket:
     """ผลของหนึ่งเฟรมที่ worker ส่งให้ UI"""
@@ -178,6 +204,7 @@ class CameraThread(QThread):
         self._source = source
         self._processor = processor
         self._observer = observer  # เรียกทุกเฟรมใน worker thread (สถิติ session)
+        self._throttle = FrameThrottle()
         self._lock = threading.Lock()
         self._latest: FramePacket | None = None
         self._notified = False
@@ -190,6 +217,16 @@ class CameraThread(QThread):
         with self._lock:
             self._notified = False
             return self._latest
+
+    def set_max_fps(self, max_fps: float | None) -> None:
+        """จำกัดเฟรมที่ประมวลผล (None = ทุกเฟรม) — เรียกจาก thread ใดก็ได้"""
+        with self._lock:
+            self._throttle.set_max_fps(max_fps)
+
+    @property
+    def max_fps(self) -> float | None:
+        with self._lock:
+            return self._throttle.max_fps
 
     def stop(self, timeout_ms: int = 3000) -> bool:
         """สั่งหยุดแล้วรอ thread จบ คืน ``False`` ถ้าไม่จบภายในเวลาที่กำหนด"""
@@ -235,6 +272,10 @@ class CameraThread(QThread):
                 self.msleep(READ_RETRY_MS)
                 continue
             failures = 0
+            with self._lock:
+                process = self._throttle.should_process(captured_at)
+            if not process:
+                continue  # โหมดประหยัดแบต: อ่านแล้วทิ้ง
 
             # ฐานเวลาเดียวกับ pipeline.clock_ms() เพื่อให้ watchdog เทียบกับ timestamp ของเฟรมได้
             timestamp_ms = int(captured_at * 1000)

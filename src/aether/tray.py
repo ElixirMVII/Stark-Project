@@ -53,6 +53,7 @@ class Tray(QObject):
     debug_requested = Signal(bool)
     calibrate_requested = Signal()
     pause_requested = Signal(bool)  # True = พักกล้อง
+    autostart_requested = Signal(bool)  # True = เปิดพร้อม Windows
     poses_requested = Signal()
     reload_requested = Signal()
     quit_requested = Signal()
@@ -75,6 +76,10 @@ class Tray(QObject):
         self._calibrate_action.triggered.connect(self.calibrate_requested)
         self._poses_action = QAction("สอนท่ามือ…", self._menu)
         self._poses_action.triggered.connect(self.poses_requested)
+        self._autostart_action = QAction("เปิดพร้อม Windows", self._menu)
+        self._autostart_action.setCheckable(True)
+        self._autostart_action.setVisible(False)  # แสดงเมื่อ set_autostart(available=True)
+        self._autostart_action.toggled.connect(self.autostart_requested)
         self._reload_action = QAction("โหลด config ใหม่", self._menu)
         self._reload_action.triggered.connect(self.reload_requested)
         self._quit_action = QAction("ออก", self._menu)
@@ -86,6 +91,7 @@ class Tray(QObject):
         self._menu.addAction(self._debug_action)
         self._menu.addAction(self._calibrate_action)
         self._menu.addAction(self._poses_action)
+        self._menu.addAction(self._autostart_action)
         self._menu.addAction(self._reload_action)
         self._menu.addSeparator()
         self._menu.addAction(self._quit_action)
@@ -113,6 +119,7 @@ class Tray(QObject):
             "debug": self._debug_action,
             "calibrate": self._calibrate_action,
             "poses": self._poses_action,
+            "autostart": self._autostart_action,
             "reload": self._reload_action,
             "quit": self._quit_action,
         }
@@ -133,6 +140,13 @@ class Tray(QObject):
         self._icon.setIcon(make_icon(color, armed))
         self._icon.setToolTip(f"AETHER — {'ARMED' if armed else 'DISARMED'}")
         self._arm_action.setText("Disarm (หยุดคุมด้วยมือ)" if armed else "Arm (เริ่มคุมด้วยมือ)")
+
+    def set_autostart(self, available: bool, checked: bool) -> None:
+        """แสดงเมนู "เปิดพร้อม Windows" (เฉพาะ Windows) และตั้งเครื่องหมายถูกโดยไม่ส่ง signal กลับ"""
+        self._autostart_action.setVisible(available)
+        blocked = self._autostart_action.blockSignals(True)
+        self._autostart_action.setChecked(checked)
+        self._autostart_action.blockSignals(blocked)
 
     def set_paused_checked(self, paused: bool) -> None:
         """ตั้งเครื่องหมายถูกของเมนูพักกล้องโดยไม่ส่ง signal กลับ"""

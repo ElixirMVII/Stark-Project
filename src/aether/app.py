@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import __version__
 from .actions import ActionExecutor, InputBackend, create_backend, double_click_time_ms
+from .autostart import AutoStart
 from .calibration_wizard import CalibrationWizard
 from .camera import CameraThread, FramePacket, FrameSource
 from .config import (
@@ -46,7 +47,7 @@ from .config import (
 )
 from .debug_view import DebugView
 from .gestures import EventKind, GestureEngine, GestureEvent
-from .health import LightMonitor, webcam_users
+from .health import LightMonitor, on_battery, webcam_users
 from .hotkeys import HotkeyManager, parse_hotkey
 from .hud.overlay import HudGroup, HudOverlay
 from .hud.theme import Theme
@@ -77,6 +78,7 @@ EXIT_OK = 0
 EXIT_SETUP_ERROR = 2  # config ผิด หรือ asset ไม่ครบ
 
 HEADLESS_STATS_INTERVAL_MS = 5000
+POWER_CHECK_INTERVAL_MS = 30_000
 WATCHDOG_INTERVAL_MS = 100
 
 
@@ -220,6 +222,13 @@ class AetherApp(QObject):
         self._stats_timer.setInterval(HEADLESS_STATS_INTERVAL_MS)
         self._stats_timer.timeout.connect(self._log_stats)
 
+        # ประหยัดแบต: ตรวจว่าเสียบสายชาร์จไหมทุก 30 วินาที (psutil — อ่านอย่างเดียว ถูก)
+        self._battery_saver = False
+        self._battery_check = on_battery
+        self._power_timer = QTimer(self)
+        self._power_timer.setInterval(POWER_CHECK_INTERVAL_MS)
+        self._power_timer.timeout.connect(self.check_power)
+
     # ---- properties ----------------------------------------------------- #
 
     @property
@@ -282,6 +291,22 @@ class AetherApp(QObject):
 
     # ---- control -------------------------------------------------------- #
 
+    @property
+    def battery_saver(self) -> bool:
+        return self._battery_saver
+
+    def check_power(self) -> None:
+        """ใช้แบตอยู่ → ประมวลผลไม่เกิน ``camera.battery_fps`` เฟรม/วินาที, เสียบสาย → เต็มที่"""
+        limit = self._config.camera.battery_fps
+        saver = bool(limit) and self._battery_check() is True
+        if saver != self._battery_saver:
+            self._battery_saver = saver
+            if saver:
+                log.info("ใช้แบตเตอรี่อยู่ — ลดการประมวลผลเหลือ %d fps (camera.battery_fps)", limit)
+            else:
+                log.info("เสียบสายชาร์จแล้ว — กลับมาประมวลผลทุกเฟรม")
+        self._thread.set_max_fps(limit if saver else None)
+
     def set_camera_paused(self, paused: bool) -> None:
         """พักกล้อง (ปล่อยกล้องให้โปรแกรมอื่น เช่นตอนเข้าประชุม) / ใช้กล้องต่อ — พักแล้วมือไม่คุมเมาส์"""
         if paused == self._camera_paused:
@@ -302,6 +327,7 @@ class AetherApp(QObject):
             if self._hud is not None:
                 self._hud.set_alert(None)
             self._thread = self._make_camera_thread()
+            self.check_power()
             self._thread.start()
         self.camera_paused_changed.emit(paused)
 
@@ -427,6 +453,8 @@ class AetherApp(QObject):
         if self._hud is None and self._debug_view is None:
             self._stats_timer.start()  # ไม่มีอะไรแสดงผล: log สถานะลง console แทน
         self._watchdog.start()
+        self.check_power()
+        self._power_timer.start()
         self._thread.start()
         if self._finder is not None:
             self._finder.start()
@@ -435,6 +463,7 @@ class AetherApp(QObject):
         """ปล่อยปุ่มเมาส์ก่อนเสมอ แล้วค่อยหยุด worker และปิด tracker"""
         self._watchdog.stop()
         self._stats_timer.stop()
+        self._power_timer.stop()
         self._hotkeys.stop()
         if self._finder is not None:
             self._finder.stop()
@@ -539,6 +568,8 @@ class AetherApp(QObject):
         if self._debug_view is not None and self._debug_view.isVisible():
             if self._hud is not None:
                 self._debug_view.set_hud_draw_ms(self._hud.draw_ms)
+            fps = self._config.camera.battery_fps if self._battery_saver else None
+            self._debug_view.set_battery_fps(fps)
             self._debug_view.show_packet(packet)
         self.frame_packet.emit(packet)
 
@@ -683,6 +714,7 @@ class AppController(QObject):
         calibration_file: Path | None = None,
         poses_file: Path | None = None,
         use_tray: bool | None = None,
+        autostart: AutoStart | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -695,6 +727,7 @@ class AppController(QObject):
         self._poses_file = poses_file or poses_path()
         self._app: AetherApp | None = None
         self._wizard: Wizard | None = None
+        self._autostart = autostart or AutoStart()
         self._debug_wanted = options.debug
 
         tray_ok = Tray.available() if use_tray is None else use_tray
@@ -702,6 +735,8 @@ class AppController(QObject):
         if self._tray is not None:
             self._tray.toggle_arm_requested.connect(self._toggle_armed)
             self._tray.pause_requested.connect(self._set_paused)
+            self._tray.autostart_requested.connect(self.set_autostart)
+            self._tray.set_autostart(self._autostart.available, self._autostart_enabled())
             self._tray.debug_requested.connect(self._set_debug)
             self._tray.calibrate_requested.connect(self.open_calibration)
             self._tray.poses_requested.connect(self.open_poses)
@@ -825,6 +860,25 @@ class AppController(QObject):
     def _toggle_armed(self) -> None:
         if self._app is not None:
             self._app.toggle_armed()
+
+    def set_autostart(self, enabled: bool) -> bool:
+        """เปิด/ปิดการเปิดพร้อม Windows (registry ของผู้ใช้ ไม่ต้องใช้ admin) คืนสถานะหลังตั้ง"""
+        try:
+            self._autostart.set_enabled(enabled)
+            log.info("เปิดพร้อม Windows: %s", "เปิด" if enabled else "ปิด")
+        except OSError as exc:
+            log.error("ตั้งค่าเปิดพร้อม Windows ไม่ได้: %s", exc)
+            self._notify("ตั้งค่าเปิดพร้อม Windows ไม่ได้", str(exc), error=True)
+        state = self._autostart_enabled()
+        if self._tray is not None:
+            self._tray.set_autostart(self._autostart.available, state)
+        return state
+
+    def _autostart_enabled(self) -> bool:
+        try:
+            return self._autostart.enabled()
+        except OSError:
+            return False
 
     def _set_paused(self, paused: bool) -> None:
         if self._app is not None:

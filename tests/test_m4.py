@@ -56,7 +56,9 @@ def test_tray_menu_actions_emit_signals(qapp):
     tray.quit_requested.connect(lambda: received.append("quit"))
 
     actions = tray.actions()
-    assert set(actions) == {"arm", "pause", "debug", "calibrate", "poses", "reload", "quit"}
+    assert set(actions) == {
+        "arm", "pause", "debug", "calibrate", "poses", "autostart", "reload", "quit"
+    }  # fmt: skip
     for name in ("arm", "calibrate", "poses", "reload", "quit"):
         actions[name].trigger()
     actions["debug"].trigger()  # checkable: ติ๊ก → True
