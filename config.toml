@@ -57,15 +57,16 @@ mark_incident = "<ctrl>+<alt>+m"   # แอปเพิ่งทำพลาด:
 [hud]
 enabled = true
 opacity = 0.9
-theme = "custom"            # "custom" (ใช้ primary/accent ข้างล่าง) | "aether" | "ember" | "verdant" | "violet" | "ice"
-primary = "#00E5FF"
-accent  = "#FFB300"
+style = "minimal"          # "minimal" = เส้นบาง เรียบๆ (ค่าเริ่มต้น) | "holo" = แบบ sci-fi เรืองแสง
+theme = "auto"             # "auto" (ตาม style) | "custom" (ใช้ primary/accent ข้างล่าง) | "pearl" | "aether" | "ember" | "verdant" | "violet" | "ice"
+primary = "#F2F4F7"
+accent  = "#D6B67A"
 show_telemetry = true
 show_radar = true
 sounds = true
 volume = 0.5
 reduce_motion = false   # true = ปิด particle, การหายใจ และแอนิเมชันตอนบูต (เหลือแค่ fade)
-quality = "high"        # "low" = ไม่มี glow ชั้นนอก และ particle ครึ่งเดียว (เครื่องช้า)
+quality = "high"        # "low" = (holo) ไม่มี glow ชั้นนอก และ particle ครึ่งเดียว (เครื่องช้า)
 
 [launcher]
 # ค้าง 👍 (Thumb_Up) เพื่อเปิดเมนูวงกลมรอบเคอร์เซอร์ → ขยับมือไปทางช่องที่ต้องการ → จีบนิ้วเพื่อเปิด

@@ -1,7 +1,8 @@
 """แผงของ HUD: ป้ายสถานะ (ขวาบน), telemetry (ซ้ายล่าง), radar มือ (ขวาล่าง)
 
 แต่ละแผงมี ``rect`` คงที่ และ method ``set_*`` ที่คืน ``True`` เมื่อสิ่งที่แสดงเปลี่ยนจริง
-overlay จะสั่งวาดใหม่เฉพาะแผงที่เปลี่ยน
+overlay จะสั่งวาดใหม่เฉพาะแผงที่เปลี่ยน — minimal = การ์ดมุมมนพื้นเข้ม ขอบบางมาก ตัวหนังสือปกติ,
+holo = กรอบตัดมุมเรืองแสง ตัวพิมพ์ใหญ่
 """
 
 from __future__ import annotations
@@ -17,7 +18,14 @@ from ..gestures import EngineSnapshot, State
 from ..tracker import Hand, hand_connections
 from .theme import LayerCache, Theme, chamfered_rect, glow_stroke, with_alpha
 
-__all__ = ["HandRadar", "StatusBadge", "TelemetryPanel", "TelemetrySampler", "TelemetryValues"]
+__all__ = [
+    "HandRadar",
+    "StatusBadge",
+    "TelemetryPanel",
+    "TelemetrySampler",
+    "TelemetryValues",
+    "mode_text",
+]
 
 MARGIN = 24.0
 _FILL = QColor(4, 10, 16)
@@ -27,11 +35,46 @@ _FILL_ALPHA = 0.55  # พื้นหลังแผง: ให้อ่าน�
 _FRAME_PAD = 6.0  # ขอบเรืองแสงล้นกรอบออกมาเท่านี้
 _frames = LayerCache()
 
+CARD_FILL = QColor(16, 18, 22)  # minimal: พื้นการ์ด
+CARD_FILL_ALPHA = 0.80
+CARD_BORDER_ALPHA = 0.10  # ขอบบาง (สีหลักจางมาก)
+CARD_RADIUS = 12.0
+
+
+def _card(painter: QPainter, rect: QRectF, color: QColor) -> None:
+    """กรอบแผงแบบ minimal: การ์ดมุมมนพื้นเข้มโปร่งแสง + ขอบ 1 px จางๆ — วาดครั้งเดียวแล้ว cache"""
+
+    def render(layer: QPainter) -> None:
+        local = QRectF(_FRAME_PAD, _FRAME_PAD, rect.width(), rect.height())
+        layer.setPen(QPen(with_alpha(color, CARD_BORDER_ALPHA), 1.0))
+        layer.setBrush(QBrush(with_alpha(CARD_FILL, CARD_FILL_ALPHA)))
+        layer.drawRoundedRect(local.adjusted(0.5, 0.5, -0.5, -0.5), CARD_RADIUS, CARD_RADIUS)
+
+    _frames.draw(
+        painter,
+        ("card", rect.width(), rect.height(), color.rgba()),
+        QPointF(rect.left() - _FRAME_PAD, rect.top() - _FRAME_PAD),
+        rect.width() + 2 * _FRAME_PAD,
+        rect.height() + 2 * _FRAME_PAD,
+        render,
+    )
+
+
+def mode_text(mode: str) -> str:
+    """ชื่อ state ของ engine แบบอ่านง่าย: ``TWO_HAND_ZOOM`` → ``Two hand zoom``"""
+    return mode.replace("_", " ").capitalize()
+
+
+def _fade_out(elapsed: float, duration: float) -> float:
+    """1 → 0 ช่วงท้าย (minimal ใช้แทนการกระพริบ)"""
+    t = min(max(elapsed / duration, 0.0), 1.0)
+    return 1.0 - t**3
+
 
 def _panel(
     painter: QPainter, rect: QRectF, color: QColor, *, scanlines: bool = False, cut: float = 10.0
 ) -> None:
-    """กรอบแผง: พื้นเข้มโปร่งแสง + ขอบตัดมุมเรืองแสง (+ เส้นสแกน) — วาดครั้งเดียวแล้ว cache"""
+    """กรอบแผงแบบ holo: พื้นเข้มโปร่งแสง + ขอบตัดมุมเรืองแสง (+ เส้นสแกน) — วาดครั้งเดียวแล้ว cache"""
 
     def render(layer: QPainter) -> None:
         local = QRectF(_FRAME_PAD, _FRAME_PAD, rect.width(), rect.height())
@@ -121,6 +164,9 @@ class StatusBadge:
         return True
 
     def paint(self, painter: QPainter, now: float) -> None:
+        if self._theme.minimal:
+            self._paint_minimal(painter, now)
+            return
         theme = self._theme
         color = theme.state_color(self._armed)
         outer = self.rect()
@@ -169,12 +215,61 @@ class StatusBadge:
         if self._alert:
             painter.setPen(theme.danger)
             painter.setFont(theme.mono_font(13))
-            painter.drawText(line, right, self._alert)
+            painter.drawText(line, right, theme.label(self._alert))
         elif self._notice is not None:
             text, start = self._notice
             blink = 0.55 + 0.45 * math.cos((now - start) * math.tau * 3.0)  # กระพริบ 3 ครั้ง/วินาที
             painter.setPen(with_alpha(theme.accent, blink))
             painter.setFont(theme.mono_font(13))
+            painter.drawText(line, right, theme.label(text))
+
+    def _paint_minimal(self, painter: QPainter, now: float) -> None:
+        """การ์ดมน: จุดสถานะ + "Armed" / "Disarmed", บรรทัดรอง "Pointer · 1 hand", ข้อความเตือนใต้การ์ด"""
+        theme = self._theme
+        outer = self.rect()
+        body = QRectF(outer.left(), outer.top(), outer.width(), self.HEIGHT)
+        _card(painter, body, theme.primary)
+        left = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+
+        dot = QPointF(body.left() + 22.0, body.top() + 23.0)
+        if self._armed:  # จุดทึบสีเน้น = พร้อมใช้
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(theme.accent))
+            painter.drawEllipse(dot, 4.0, 4.0)
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(theme.disarmed, 1.4))
+            painter.drawEllipse(dot, 3.6, 3.6)
+
+        painter.setPen(theme.primary if self._armed else with_alpha(theme.primary, 0.75))
+        painter.setFont(theme.text_font(15, 600))
+        title = QRectF(body.left() + 36.0, body.top() + 9.0, body.width() - 48.0, 28.0)
+        painter.drawText(title, left, "Armed" if self._armed else "Disarmed")
+
+        if self._dry_run:
+            painter.setPen(theme.accent)
+            painter.setFont(theme.text_font(11, 500))
+            painter.drawText(
+                QRectF(body.right() - 92.0, body.top() + 9.0, 78.0, 28.0), right, "Dry run"
+            )
+
+        hands = f"{self._hands} hand" + ("" if self._hands == 1 else "s")
+        painter.setPen(theme.secondary)
+        painter.setFont(theme.text_font(12, 400))
+        detail = QRectF(body.left() + 36.0, body.top() + 34.0, body.width() - 50.0, 20.0)
+        painter.drawText(detail, left, f"{mode_text(self._mode)}  ·  {hands}")
+
+        line = QRectF(
+            outer.left(), body.bottom() + 3.0, outer.width() - 4.0, self.ALERT_HEIGHT - 3.0
+        )
+        painter.setFont(theme.text_font(12, 500))
+        if self._alert:
+            painter.setPen(theme.danger)
+            painter.drawText(line, right, self._alert)
+        elif self._notice is not None:
+            text, start = self._notice
+            painter.setPen(with_alpha(theme.accent, _fade_out(now - start, self.NOTICE_SECONDS)))
             painter.drawText(line, right, text)
 
 
@@ -263,6 +358,9 @@ class TelemetryPanel:
         return True
 
     def paint(self, painter: QPainter, now: float) -> None:
+        if self._theme.minimal:
+            self._paint_minimal(painter)
+            return
         theme = self._theme
         color = theme.state_color(self._armed)
         rect = self.rect()
@@ -305,6 +403,57 @@ class TelemetryPanel:
             painter.drawRect(
                 QRectF(bar.left(), bar.top(), bar.width() * max(0.0, min(level, 1.0)), 4.0)
             )
+            y += 24.0
+
+    def _paint_minimal(self, painter: QPainter) -> None:
+        theme = self._theme
+        rect = self.rect()
+        _card(painter, rect, theme.primary)
+        values = self._values
+        left = rect.left() + 16.0
+        right = rect.right() - 16.0
+        align_left = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        align_right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        text = theme.primary if self._armed else with_alpha(theme.primary, 0.75)
+
+        painter.setPen(text)
+        painter.setFont(theme.text_font(12, 600))
+        painter.drawText(QRectF(left, rect.top() + 10.0, 120.0, 18.0), align_left, "System")
+        painter.setPen(theme.secondary)
+        painter.setFont(theme.mono_font(12))
+        painter.drawText(
+            QRectF(left, rect.top() + 10.0, right - left, 18.0), align_right, values.clock
+        )
+
+        rows = (
+            ("CPU", f"{values.cpu:.0f}%", values.cpu / 100.0),
+            ("Memory", f"{values.ram:.0f}%", values.ram / 100.0),
+            ("Camera", f"{values.fps:.0f} fps", min(values.fps / 30.0, 1.0)),
+            ("Latency", f"{values.latency_ms:.0f} ms", min(values.latency_ms / 60.0, 1.0)),
+        )
+        label_font = theme.text_font(12, 400)
+        value_font = theme.mono_font(12)
+        y = rect.top() + 36.0
+        for label, value, level in rows:
+            row = QRectF(left, y, right - left, 20.0)
+            painter.setFont(label_font)
+            painter.setPen(theme.secondary)
+            painter.drawText(row, align_left, label)
+            painter.setFont(value_font)
+            painter.setPen(text)
+            painter.drawText(row, align_right, value)
+
+            warn = (label in ("CPU", "Memory") and level > 0.85) or (
+                label == "Latency" and level >= 1.0
+            )
+            warn = warn or (label == "Camera" and 0.0 < values.fps < 25.0)
+            bar = QRectF(left + 64.0, y + 9.0, right - left - 128.0, 2.0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(with_alpha(theme.primary, 0.10)))
+            painter.drawRoundedRect(bar, 1.0, 1.0)
+            fill = QRectF(bar.left(), bar.top(), bar.width() * max(0.0, min(level, 1.0)), 2.0)
+            painter.setBrush(QBrush(theme.accent if warn else with_alpha(theme.primary, 0.55)))
+            painter.drawRoundedRect(fill, 1.0, 1.0)
             y += 24.0
 
 
@@ -365,6 +514,9 @@ class HandRadar:
         ]
 
     def paint(self, painter: QPainter, now: float) -> None:
+        if self._theme.minimal:
+            self._paint_minimal(painter)
+            return
         theme = self._theme
         color = theme.state_color(self._armed)
         rect = self.rect()
@@ -400,3 +552,42 @@ class HandRadar:
         painter.setBrush(QBrush(hand_color))
         for point in points:
             painter.drawEllipse(point, 1.8, 1.8)
+
+    def _paint_minimal(self, painter: QPainter) -> None:
+        theme = self._theme
+        rect = self.rect()
+        _card(painter, rect, theme.primary)
+        align = Qt.AlignmentFlag.AlignVCenter
+        title = QRectF(rect.left() + 14.0, rect.top() + 8.0, rect.width() - 28.0, 16.0)
+        painter.setPen(theme.secondary)
+        painter.setFont(theme.text_font(11, 500))
+        painter.drawText(title, Qt.AlignmentFlag.AlignLeft | align, "Hand")
+
+        hand = self._hand
+        if hand is None:
+            painter.setFont(theme.text_font(12, 400))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "No hand")
+            return
+        painter.drawText(title, Qt.AlignmentFlag.AlignRight | align, hand.handedness.capitalize())
+
+        if not self._armed:
+            hand_color = theme.disarmed
+        elif hand.handedness == self._dominant:
+            hand_color = theme.primary
+        else:
+            hand_color = theme.accent
+        area = rect.adjusted(self.PADDING, self.PADDING + 8.0, -self.PADDING, -self.PADDING + 2.0)
+        points = self.skeleton_points(area)
+        path = QPainterPath()
+        for start, end in self._connections:
+            path.moveTo(points[start])
+            path.lineTo(points[end])
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        pen = QPen(with_alpha(hand_color, 0.85), 1.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(hand_color))
+        for point in points:
+            painter.drawEllipse(point, 1.6, 1.6)

@@ -363,7 +363,7 @@ def test_overlay_draws_menu_and_plays_sounds(qapp, theme):
     )
     assert sounds.played == ["swipe", "click"]
     assert overlay._launcher._flash is not None
-    assert overlay._charge.label() in ("MINIMIZE", "APPS", "ARM", "DISARM")
+    assert overlay._charge.label() in ("Minimize", "Apps", "Arm", "Disarm")
     overlay.stop()
 
 
@@ -372,4 +372,8 @@ def test_charge_ring_label_for_launcher(theme):
 
     ring = ChargeRing(theme, {})
     ring.set_state(QPointF(10, 10), snapshot(State.CHARGING, charge=0.4, charge_kind="launcher"))
-    assert ring.label() == "APPS"
+    assert ring.label() == "Apps"
+    holo = Theme.from_config(parse_config({"hud": {"style": "holo"}}).hud, None)
+    ring = ChargeRing(holo, {})
+    ring.set_state(QPointF(10, 10), snapshot(State.CHARGING, charge=0.4, charge_kind="launcher"))
+    assert ring.label() == "APPS"  # holo: ตัวพิมพ์ใหญ่

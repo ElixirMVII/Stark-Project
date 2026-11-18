@@ -115,21 +115,35 @@ def test_load_config_reads_file(tmp_path):
 # ---- ธีมสี --------------------------------------------------------------- #
 
 
-def test_default_theme_is_custom_with_classic_colors():
+def test_default_style_is_minimal_with_pearl_theme():
     from aether.config import THEMES
 
     hud = Config().hud
-    assert hud.theme == "custom"
-    assert hud.palette == THEMES["aether"]  # ค่าเริ่มต้นของ primary/accent = ธีม aether
+    assert (hud.style, hud.theme) == ("minimal", "auto")
+    assert hud.palette == THEMES["pearl"]
+    # primary/accent ค่าเริ่มต้น (ใช้เมื่อ theme = "custom") = สีของ pearl
+    assert (hud.primary, hud.accent) == THEMES["pearl"][:2]
+
+
+def test_auto_theme_follows_style():
+    from aether.config import THEMES
+
+    assert parse_config({"hud": {"style": "holo"}}).hud.palette == THEMES["aether"]
+    assert parse_config({"hud": {"style": "minimal"}}).hud.palette == THEMES["pearl"]
+
+
+def test_unknown_style_is_rejected():
+    with pytest.raises(ConfigError, match="hud.style"):
+        parse_config({"hud": {"style": "neon"}})
 
 
 def test_custom_theme_uses_user_colors():
-    hud = parse_config({"hud": {"primary": "#112233", "accent": "#445566"}}).hud
+    hud = parse_config({"hud": {"theme": "custom", "primary": "#112233", "accent": "#445566"}}).hud
     assert (hud.palette.primary, hud.palette.accent) == ("#112233", "#445566")
     assert hud.palette.danger and hud.palette.disarmed
 
 
-@pytest.mark.parametrize("name", ["aether", "ember", "verdant", "violet", "ice"])
+@pytest.mark.parametrize("name", ["pearl", "aether", "ember", "verdant", "violet", "ice"])
 def test_preset_themes_override_primary_and_accent(name):
     import re
 

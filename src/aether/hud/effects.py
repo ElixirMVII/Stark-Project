@@ -16,7 +16,7 @@ import random
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen
 
-from .theme import Theme, glow_stroke, with_alpha
+from .theme import Theme, with_alpha
 
 __all__ = [
     "MAX_PARTICLES",
@@ -242,4 +242,4 @@ class MinimizeCollapse:
         rect, alpha = current
         path = QPainterPath()
         path.addRect(rect)
-        glow_stroke(painter, path, self._theme.accent, 1.6, strength=0.8, alpha=alpha)
+        self._theme.stroke(painter, path, self._theme.accent, 1.6, strength=0.8, alpha=alpha)

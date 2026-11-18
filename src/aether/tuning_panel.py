@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .tuning import TUNABLES, Tunable
+from .ui_style import DANGER
 
 __all__ = ["TuningPanel"]
 
@@ -106,7 +107,7 @@ class TuningPanel(QWidget):
 
     def show_status(self, text: str, *, error: bool = False) -> None:
         self._status.setText(text)
-        self._status.setStyleSheet("color: #FF3D57;" if error else "")
+        self._status.setStyleSheet(f"color: {DANGER};" if error else "")
 
     # ---- internal ------------------------------------------------------- #
 

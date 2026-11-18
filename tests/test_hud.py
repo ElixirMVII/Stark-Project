@@ -91,9 +91,13 @@ class Spy(HudOverlay):
         super().update(*args)
 
 
+HOLO = {"style": "holo"}
+
+
 @pytest.fixture
 def theme(qapp) -> Theme:
-    return Theme.from_config(Config().hud, None)
+    """ไฟล์นี้ทดสอบสไตล์ holo เป็นหลัก — minimal อยู่ใน test_minimal_style.py"""
+    return Theme.from_config(parse_config({"hud": HOLO}).hud, None)
 
 
 @pytest.fixture
@@ -617,13 +621,13 @@ def _assert_paints_inside_rect(element, image: QImage) -> None:
 @pytest.mark.parametrize(
     ("spec", "label"),
     [
-        ("ctrl+win+left", "DESK"),
-        ("ctrl+win+right", "DESK"),
-        ("win+tab", "TASKS"),
-        ("win+d", "DESKTOP"),
-        ("minimize_foreground", "MINIMIZE"),
+        ("ctrl+win+left", "Desk"),
+        ("ctrl+win+right", "Desk"),
+        ("win+tab", "Tasks"),
+        ("win+d", "Desktop"),
+        ("minimize_foreground", "Minimize"),
         ("none", "—"),
-        ("alt+tab", "ALT+TAB"),  # action ที่ผู้ใช้ตั้งเอง → แสดงชื่อปุ่มลัด
+        ("alt+tab", "Alt+Tab"),  # action ที่ผู้ใช้ตั้งเอง → แสดงชื่อปุ่มลัด
         ("f11", "F11"),
         ("ctrl+nope", "?"),
     ],
@@ -633,14 +637,16 @@ def test_action_labels(spec, label):
 
 
 def test_radial_labels_follow_config(theme):
+    # เก็บแบบตัวพิมพ์ปกติ — holo แปลงเป็นตัวใหญ่ตอนวาด (theme.label)
     assert Radial(theme, DEFAULT_ACTIONS).labels == {
-        "left": "DESK",
-        "right": "DESK",
-        "up": "TASKS",
-        "down": "DESKTOP",
+        "left": "Desk",
+        "right": "Desk",
+        "up": "Tasks",
+        "down": "Desktop",
     }
     custom = Radial(theme, {**DEFAULT_ACTIONS, "swipe_up": "alt+tab", "swipe_down": "none"})
-    assert custom.labels["up"] == "ALT+TAB" and custom.labels["down"] == "—"
+    assert custom.labels["up"] == "Alt+Tab" and custom.labels["down"] == "—"
+    assert theme.label(custom.labels["up"]) == "ALT+TAB"
 
 
 def test_radial_only_shows_in_gesture_mode(theme):
@@ -779,7 +785,17 @@ def test_reticle_paints_zoom_mode_inside_its_rect(theme):
 
 
 def test_theme_from_config_and_font_fallback(qapp):
-    config = parse_config({"hud": {"primary": "#11AA33", "accent": "#AA5500", "opacity": 0.7}})
+    config = parse_config(
+        {
+            "hud": {
+                **HOLO,
+                "theme": "custom",
+                "primary": "#11AA33",
+                "accent": "#AA5500",
+                "opacity": 0.7,
+            }
+        }
+    )
     theme = Theme.from_config(config.hud, None)
     assert theme.primary == QColor("#11AA33") and theme.accent == QColor("#AA5500")
     assert theme.opacity == 0.7
@@ -797,7 +813,7 @@ def test_theme_loads_bundled_fonts_when_present(qapp, tmp_path):
     fonts = assets_dir() / "fonts"
     if not (fonts / "Orbitron.ttf").is_file():
         pytest.skip("ยังไม่ได้โหลดฟอนต์ (python tools/download_assets.py)")
-    theme = Theme.from_config(Config().hud, fonts)
+    theme = Theme.from_config(parse_config({"hud": HOLO}).hud, fonts)
     assert theme.display_family == "Orbitron" and theme.mono_family == "Share Tech Mono"
     assert theme.display_is_variable
     assert theme.display_font(20, 800).family() == "Orbitron"

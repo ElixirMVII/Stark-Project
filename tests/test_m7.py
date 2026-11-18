@@ -1,4 +1,7 @@
-"""M7 ขัด animation: แปลงร่าง reticle, ความลึก, effect, reduce_motion / quality, เวลาวาด (Qt offscreen)"""
+"""M7 ขัด animation: แปลงร่าง reticle, ความลึก, effect, reduce_motion / quality, เวลาวาด (Qt offscreen)
+
+ส่วนใหญ่ทดสอบสไตล์ holo (แบบที่ M7 ออกแบบไว้) — การแปลงร่างทดสอบทั้งสองสไตล์ ส่วน minimal ดู test_minimal_style.py
+"""
 
 from __future__ import annotations
 
@@ -24,9 +27,16 @@ from aether.mapping import ScreenGeometry
 FHD = ScreenGeometry(0, 0, 1920, 1080)
 
 
+HOLO = {"style": "holo"}
+
+
+def style_theme(style: str) -> Theme:
+    return Theme.from_config(parse_config({"hud": {"style": style}}).hud)
+
+
 @pytest.fixture
 def theme(qapp):
-    return Theme.from_config(Config().hud)
+    return style_theme("holo")
 
 
 def snap(state: State = State.POINTER, armed: bool = True, **kw) -> EngineSnapshot:
@@ -51,9 +61,9 @@ def test_every_state_maps_to_a_mode():
 
 
 def _settle_seconds(reticle: Reticle, mode: str, t0: float) -> float:
-    start = reticle_module._vector(MODES[reticle.mode])
+    start = reticle_module._vector(reticle._modes[reticle.mode])
     reticle.set_state(QPointF(100, 100), SNAPSHOTS[mode], t0)
-    goal = reticle_module._vector(MODES[mode])
+    goal = reticle_module._vector(reticle._modes[mode])
     t = t0
     while t < t0 + 1.0:
         t += 1 / 60
@@ -68,9 +78,10 @@ def _settle_seconds(reticle: Reticle, mode: str, t0: float) -> float:
     return 99.0
 
 
+@pytest.mark.parametrize("style", ["holo", "minimal"])
 @pytest.mark.parametrize(("a", "b"), list(itertools.permutations(MODES, 2)))
-def test_morph_between_any_two_modes_finishes_within_250_ms(theme, a, b):
-    reticle = Reticle(theme)
+def test_morph_between_any_two_modes_finishes_within_250_ms(qapp, style, a, b):
+    reticle = Reticle(style_theme(style))
     reticle.set_state(QPointF(100, 100), SNAPSHOTS[a], 0.0)
     reticle.advance(0.0)
     for i in range(1, 90):
@@ -341,7 +352,7 @@ def overlay(config: Config) -> HudOverlay:
 
 
 def test_reduce_motion_removes_particles(qapp):
-    hud = overlay(parse_config({"hud": {"sounds": False, "reduce_motion": True}}))
+    hud = overlay(parse_config({"hud": {**HOLO, "sounds": False, "reduce_motion": True}}))
     try:
         assert "particles" not in hud._elements and hud._particles is None
         hud.handle_events((GestureEvent(EventKind.CLICK, x=500, y=500),))  # ต้องไม่ error
@@ -350,14 +361,14 @@ def test_reduce_motion_removes_particles(qapp):
 
 
 def test_low_quality_halves_particles_and_drops_the_outer_glow(qapp):
-    hud = overlay(parse_config({"hud": {"sounds": False, "quality": "low"}}))
+    hud = overlay(parse_config({"hud": {**HOLO, "sounds": False, "quality": "low"}}))
     try:
         assert hud._particles._per_burst == 7
         assert theme_module._glow_layers == theme_module._GLOW_LAYERS[1:]
     finally:
         hud.stop()
         theme_module.set_glow_quality(True)
-    high = overlay(parse_config({"hud": {"sounds": False}}))
+    high = overlay(parse_config({"hud": {**HOLO, "sounds": False}}))
     try:
         assert (
             high._particles._per_burst == 14
@@ -375,7 +386,7 @@ def test_quality_must_be_high_or_low():
 
 
 def test_overlay_events_start_effects(qapp):
-    hud = overlay(parse_config({"hud": {"sounds": False}}))
+    hud = overlay(parse_config({"hud": {**HOLO, "sounds": False}}))
     try:
         snapshot = EngineSnapshot(
             state=State.GESTURE, armed=True, hand_present=True, cursor=(960, 540)
@@ -415,7 +426,7 @@ def test_overlay_events_start_effects(qapp):
 
 def test_draw_time_of_a_busy_frame_is_measured(qapp):
     """วาดทุกชิ้นพร้อมกันหลายรอบ แล้วรายงานเวลา (งบของ spec คือ ≤ 4 ms ต่อเฟรมบนเครื่องจริง)"""
-    hud = overlay(parse_config({"hud": {"sounds": False}}))
+    hud = overlay(parse_config({"hud": {**HOLO, "sounds": False}}))
     try:
         for _ in range(5):
             hud.handle_events((GestureEvent(EventKind.CLICK, x=960, y=540),))

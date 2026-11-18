@@ -19,6 +19,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QPushButton, QWidget
 
+from . import ui_style
 from .camera import FramePacket
 from .config import Config
 from .geometry import pointer_anchor
@@ -29,13 +30,13 @@ from .tuning_panel import PANEL_WIDTH, TuningPanel
 
 __all__ = ["DebugView"]
 
-_BACKGROUND = QColor("#0B0F14")
-_TEXT = QColor("#E6F1F5")
-_DIM = QColor("#7A8B99")
-_SIM_BACKGROUND = QColor("#101820")  # พื้นของเฟรมจำลอง (ไม่มีภาพกล้อง)
-_PANEL = QColor(0, 0, 0, 170)
-_WARN = QColor("#FFB300")
-_DISARMED = QColor("#7A8B99")
+_BACKGROUND = QColor(ui_style.BACKGROUND)
+_TEXT = QColor(ui_style.TEXT)
+_DIM = QColor(ui_style.TEXT_DIM)
+_SIM_BACKGROUND = QColor("#16191D")  # พื้นของเฟรมจำลอง (ไม่มีภาพกล้อง)
+_PANEL = QColor(14, 16, 20, 190)
+_WARN = QColor(ui_style.WARN)
+_DISARMED = QColor(ui_style.TEXT_DIM)
 _FINGERTIPS = (LM.THUMB_TIP, LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP)
 _MARGIN = 8
 
@@ -43,7 +44,7 @@ _MARGIN = 8
 class DebugView(QWidget):
     """แสดง :class:`FramePacket` ล่าสุด (เรียก method ทั้งหมดจาก UI thread)
 
-    มีแผง live tuning (:class:`~aether.tuning_panel.TuningPanel`) ด้านขวา เปิด/ปิดด้วยปุ่ม TUNE หรือกด T
+    มีแผง live tuning (:class:`~aether.tuning_panel.TuningPanel`) ด้านขวา เปิด/ปิดด้วยปุ่ม Tune หรือกด T
     """
 
     closed = Signal()
@@ -82,7 +83,7 @@ class DebugView(QWidget):
 
         self._tuning = TuningPanel(current_values(config), self)
         self._tuning.hide()
-        self._tune_button = QPushButton("TUNE", self)
+        self._tune_button = QPushButton("Tune", self)
         self._tune_button.setCheckable(True)
         self._tune_button.setFixedSize(58, 24)
         self._tune_button.move(_MARGIN, _MARGIN)
@@ -265,7 +266,7 @@ class DebugView(QWidget):
         box.moveTop(max(target.top(), box.top()))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(_PANEL))
-        painter.drawRoundedRect(box, 4, 4)
+        painter.drawRoundedRect(box, 8, 8)
         painter.setPen(color)
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
 
@@ -324,7 +325,7 @@ class DebugView(QWidget):
         box = QRectF(_MARGIN, self.height() - _MARGIN - height, width, height)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(_PANEL))
-        painter.drawRoundedRect(box, 4, 4)
+        painter.drawRoundedRect(box, 8, 8)
         baseline = box.top() + 6 + metrics.ascent()
         colors = (_TEXT if fps_ok else _WARN, _DIM, _TEXT)  # FPS ต่ำกว่าเกณฑ์ 25 → สีเตือน
         for i, (line, color) in enumerate(zip(lines, colors)):
@@ -344,7 +345,7 @@ class DebugView(QWidget):
         )
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(_PANEL))
-        painter.drawRoundedRect(box, 4, 4)
+        painter.drawRoundedRect(box, 8, 8)
 
         painter.setFont(self._mono)
         painter.setPen(_DIM)
@@ -385,7 +386,7 @@ class DebugView(QWidget):
         box = QRectF(self._view_width() - _MARGIN - width, _MARGIN, width, metrics.height() + 8)
         painter.setPen(QPen(color, 1.5))
         painter.setBrush(QBrush(_PANEL))
-        painter.drawRoundedRect(box, 4, 4)
+        painter.drawRoundedRect(box, 8, 8)
         painter.setPen(color)
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 

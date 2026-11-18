@@ -230,7 +230,7 @@ def test_low_light_alert_on_the_hud(qapp):
         for i in range(40):
             packet = SimpleNamespace(brightness=15.0, captured_at=100.0 + i / 10)
             app._check_light(packet)
-        assert app.light.low and app.hud._badge._alert == "LOW LIGHT"
+        assert app.light.low and app.hud._badge._alert == "Low light"
         for i in range(30):
             app._check_light(SimpleNamespace(brightness=120.0, captured_at=110.0 + i / 10))
         assert not app.light.low and app.hud._badge._alert is None

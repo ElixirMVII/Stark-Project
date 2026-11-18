@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from math import cos, radians, sin
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPainterPath
+from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPainterPath, QPen
 
 from ..gestures import EngineSnapshot, State
 from .theme import Theme, glow_stroke, with_alpha
@@ -24,6 +24,7 @@ HALF_EXTENT = OUTER_RADIUS + 16.0
 FADE_SECONDS = 0.12
 FLASH_SECONDS = 0.35
 _BACKDROP = QColor(2, 8, 14)
+MINIMAL_FILL = QColor(16, 18, 22)
 
 
 def sector_path(
@@ -103,6 +104,9 @@ class LauncherMenu:
         flash_index = self._flash[0] if self._flash is not None else None
         flash = 0.0 if self._flash is None else 1.0 - (now - self._flash[1]) / FLASH_SECONDS
 
+        if theme.minimal:
+            self._paint_minimal(painter, base, flash_index, flash)
+            return
         font = theme.display_font(11, 700, spacing=1.5)
         painter.setFont(font)
         metrics = QFontMetrics(font)
@@ -131,6 +135,42 @@ class LauncherMenu:
             )
 
             # ป้ายกลางช่อง (ตัดให้พอดีความกว้างของช่องตรงรัศมีกลาง)
+            angle = radians(index * width)
+            point = QPointF(
+                self._center.x() + sin(angle) * middle, self._center.y() - cos(angle) * middle
+            )
+            span = max(36.0, min(2.0 * middle * sin(radians(width / 2.0)) - 8.0, 110.0))
+            text = metrics.elidedText(label, Qt.TextElideMode.ElideRight, int(span))
+            box = QRectF(point.x() - span / 2.0, point.y() - 10.0, span, 20.0)
+            painter.setPen(with_alpha(theme.accent if selected else base, alpha))
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _paint_minimal(self, painter: QPainter, base, flash_index, flash: float) -> None:
+        """ช่องพื้นเข้มขอบบางมาก — ช่องที่เลือกเป็นสีเน้นจางๆ ขอบสีเน้น"""
+        theme = self._theme
+        alpha = self._alpha
+        count = len(self._labels)
+        width = 360.0 / count
+        font = theme.text_font(12, 500)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        middle = (INNER_RADIUS + OUTER_RADIUS) / 2.0
+        for index, label in enumerate(self._labels):
+            start = index * width - width / 2.0 + GAP_DEG / 2.0
+            sector = sector_path(self._center, INNER_RADIUS, OUTER_RADIUS, start, width - GAP_DEG)
+            selected = index == self._selection
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(with_alpha(MINIMAL_FILL, 0.78 * alpha)))
+            painter.drawPath(sector)
+            if selected:
+                boost = 0.18 + 0.35 * max(flash, 0.0) if index == flash_index else 0.18
+                painter.setBrush(QBrush(with_alpha(theme.accent, boost * alpha)))
+                painter.drawPath(sector)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            edge = theme.accent if selected else base
+            painter.setPen(QPen(with_alpha(edge, (0.9 if selected else 0.14) * alpha), 1.0))
+            painter.drawPath(sector)
+
             angle = radians(index * width)
             point = QPointF(
                 self._center.x() + sin(angle) * middle, self._center.y() - cos(angle) * middle

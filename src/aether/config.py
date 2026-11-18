@@ -20,6 +20,7 @@ from pathlib import Path
 from .hotkeys import parse_action, parse_hotkey
 
 __all__ = [
+    "HUD_STYLES",
     "THEMES",
     "ActionsConfig",
     "CameraConfig",
@@ -77,8 +78,12 @@ THEMES: dict[str, Palette] = {
     "verdant": Palette("#3DFF8F", "#00E5FF", "#FF3D57", "#71877A"),  # เขียว + ฟ้า
     "violet": Palette("#B388FF", "#FF80CC", "#FF3D57", "#857C99"),  # ม่วง + ชมพู
     "ice": Palette("#E6F7FF", "#7FD8FF", "#FF5252", "#8A949B"),  # ขาวอมฟ้า + ฟ้า
+    "pearl": Palette("#F2F4F7", "#D6B67A", "#E5484D", "#8B9098"),  # ขาวนวล + ทองแชมเปญ (minimal)
 }
-THEME_NAMES = ("custom", *THEMES)
+# "auto" = ธีมคู่กับ hud.style: minimal → pearl, holo → aether
+THEME_NAMES = ("auto", "custom", *THEMES)
+HUD_STYLES = ("minimal", "holo")
+STYLE_THEMES = {"minimal": "pearl", "holo": "aether"}
 
 
 class ConfigError(ValueError):
@@ -268,9 +273,11 @@ class HotkeysConfig:
 class HudConfig:
     enabled: bool = True
     opacity: float = 0.9
-    theme: str = "custom"  # "custom" = ใช้ primary/accent ข้างล่าง | ชื่อธีมใน THEMES
-    primary: str = "#00E5FF"
-    accent: str = "#FFB300"
+    # "minimal" = เส้นบาง ไม่มีแสงเรือง ฟอนต์ระบบ (ค่าเริ่มต้น) | "holo" = แบบ sci-fi เดิม (เรืองแสง, ตัดมุม)
+    style: str = "minimal"
+    theme: str = "auto"  # "auto" = ตาม style | "custom" = ใช้ primary/accent ข้างล่าง | ชื่อธีมใน THEMES
+    primary: str = "#F2F4F7"
+    accent: str = "#D6B67A"
     show_telemetry: bool = True
     show_radar: bool = True
     sounds: bool = True
@@ -282,6 +289,10 @@ class HudConfig:
         _require(
             self.quality in ("high", "low"),
             f'hud.quality ต้องเป็น "high" หรือ "low" (ได้ {self.quality!r})',
+        )
+        _require(
+            self.style in HUD_STYLES,
+            f'hud.style ต้องเป็น "minimal" หรือ "holo" (ได้ {self.style!r})',
         )
         _require(0.0 <= self.opacity <= 1.0, "hud.opacity ต้องอยู่ในช่วง 0–1")
         _require(0.0 <= self.volume <= 1.0, "hud.volume ต้องอยู่ในช่วง 0–1")
@@ -298,10 +309,12 @@ class HudConfig:
 
     @property
     def palette(self) -> Palette:
-        """สีที่ใช้จริง: จากธีมสำเร็จรูป หรือ primary/accent ที่ตั้งเอง (theme = "custom")"""
+        """สีที่ใช้จริง: ธีมคู่กับ style (auto), ธีมสำเร็จรูป หรือ primary/accent ที่ตั้งเอง (custom)"""
+        default = THEMES[STYLE_THEMES[self.style]]
+        if self.theme == "auto":
+            return default
         if self.theme in THEMES:
             return THEMES[self.theme]
-        default = THEMES["aether"]
         return Palette(self.primary, self.accent, default.danger, default.disarmed)
 
 

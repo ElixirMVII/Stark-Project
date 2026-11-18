@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import ui_style
 from .calibration_wizard import HandPreview
 from .config import Config
 from .pose_teach import TeachSession
@@ -36,8 +37,8 @@ __all__ = ["ACTION_PRESETS", "PoseWizard"]
 
 log = logging.getLogger(__name__)
 
-_WARN = "#FFB300"
-_OK = "#3DFF8F"
+_WARN = ui_style.WARN
+_OK = ui_style.OK
 
 # ปุ่มลัดที่ให้เลือกง่ายๆ (พิมพ์เองได้ทุกแบบที่ [actions] ใน config.toml รับ)
 ACTION_PRESETS = (

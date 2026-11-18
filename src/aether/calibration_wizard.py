@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import ui_style
 from .calibration import CalibrationSession, save_calibration
 from .config import Config
 from .tracker import Hand, HandFrame, hand_connections
@@ -31,7 +32,7 @@ log = logging.getLogger(__name__)
 
 _BACKGROUND = QColor("#0B0F14")
 _DIM = QColor("#7A8B99")
-_WARN = "#FFB300"
+_WARN = ui_style.WARN
 
 
 class HandPreview(QWidget):

@@ -269,7 +269,7 @@ def test_camera_error_shows_alert_on_hud(qapp):
     h.app._thread._source = DeadCamera()
     h.app.start()
     try:
-        assert h.wait(lambda: h.app.hud._badge._alert == "CAMERA LOST")
+        assert h.wait(lambda: h.app.hud._badge._alert == "Camera lost")
     finally:
         h.app.shutdown()
 

@@ -31,17 +31,24 @@ CHARGE_HALF_WIDTH = 84.0
 CHARGE_TOP = 66.0
 CHARGE_BOTTOM = 92.0  # มีป้ายใต้วงแหวน
 
+MINIMAL_RADIAL = 46.0  # minimal: ระยะถึงหัวลูกศร (ชิด reticle กว่า)
+MINIMAL_CHARGE_RADIUS = 30.0
+
 # ป้ายของ action ค่าเริ่มต้น (ตามลำดับการกดปุ่ม) — action อื่นแสดงเป็นชื่อปุ่มลัด
 _KNOWN_LABELS = {
-    ("ctrl", "win", "left"): "DESK",
-    ("ctrl", "win", "right"): "DESK",
-    ("win", "tab"): "TASKS",
-    ("win", "d"): "DESKTOP",
+    ("ctrl", "win", "left"): "Desk",
+    ("ctrl", "win", "right"): "Desk",
+    ("win", "tab"): "Tasks",
+    ("win", "d"): "Desktop",
 }
 
 
+def _key_label(name: str) -> str:
+    return name.upper() if len(name) == 1 else name.capitalize()
+
+
 def action_label(spec: str) -> str:
-    """ป้ายสั้นๆ ของ action ใน config สำหรับแสดงบน HUD"""
+    """ป้ายสั้นๆ ของ action ใน config สำหรับแสดงบน HUD (ตัวพิมพ์ปกติ — holo แปลงเป็นตัวใหญ่ตอนวาด)"""
     try:
         action = parse_action(spec)
     except ValueError:
@@ -49,10 +56,11 @@ def action_label(spec: str) -> str:
     if action == "none":
         return "—"
     if action == "minimize_foreground":
-        return "MINIMIZE"
+        return "Minimize"
     if isinstance(action, Hotkey):
-        return _KNOWN_LABELS.get(action.keys, str(action).upper())
-    return str(action).upper()
+        known = _KNOWN_LABELS.get(action.keys)
+        return known or "+".join(_key_label(key) for key in action.keys)
+    return str(action).replace("_", " ").capitalize()
 
 
 def _fade(alpha: float, visible: bool, dt: float) -> float:
@@ -121,6 +129,9 @@ class Radial:
         cx, cy = self._center.x(), self._center.y()
         base = theme.state_color(self._armed)
         idle_alpha = self._alpha * (0.95 if self._ready else 0.4)  # ยังไม่พร้อมปัด = จาง
+        if theme.minimal:
+            self._paint_minimal(painter, now, cx, cy, base, idle_alpha)
+            return
 
         # วงแหวนประบางๆ บอกขอบเขตของเข็มทิศ
         ring = QPainterPath()
@@ -158,7 +169,7 @@ class Radial:
             chevrons.lineTo(back_x + dy * 9.0, back_y + dx * 9.0)
         glow_stroke(painter, chevrons, color, 2.0, strength=strength, alpha=alpha)
 
-        label = self._labels[direction]
+        label = self._theme.label(self._labels[direction])
         if dx:
             box = QRectF(tip.x() + (8.0 if dx > 0 else -100.0), tip.y() - 13.0, 92.0, 26.0)
             horizontal = Qt.AlignmentFlag.AlignLeft if dx > 0 else Qt.AlignmentFlag.AlignRight
@@ -167,6 +178,34 @@ class Radial:
             box = QRectF(tip.x() - 84.0, tip.y() + (6.0 if dy > 0 else -32.0), 168.0, 26.0)
             flags = Qt.AlignmentFlag.AlignCenter
         draw_label(painter, box, flags, label, color, alpha)
+
+    def _paint_minimal(
+        self, painter: QPainter, now: float, cx: float, cy: float, base, idle_alpha: float
+    ) -> None:
+        """ลูกศรบางทิศละอัน + ป้ายแคปซูล — ทิศที่ปัดเปลี่ยนเป็นสีเน้นแล้วค่อยๆ จาง"""
+        theme = self._theme
+        painter.setFont(theme.text_font(12, 500))
+        for direction in DIRECTIONS:
+            started = self._flash.get(direction)
+            flash = 0.0 if started is None else max(0.0, 1.0 - (now - started) / FLASH_SECONDS)
+            color = theme.accent if flash > 0.0 else base
+            alpha = max(idle_alpha, self._alpha * flash)
+            dx, dy = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}[direction]
+            tip = QPointF(cx + dx * MINIMAL_RADIAL, cy + dy * MINIMAL_RADIAL)
+            back_x, back_y = tip.x() - dx * 6.0, tip.y() - dy * 6.0
+            chevron = QPainterPath()
+            chevron.moveTo(back_x - dy * 6.0, back_y - dx * 6.0)
+            chevron.lineTo(tip)
+            chevron.lineTo(back_x + dy * 6.0, back_y + dx * 6.0)
+            theme.stroke(painter, chevron, color, 1.5, alpha=alpha)
+            if dx:
+                box = QRectF(tip.x() + (8.0 if dx > 0 else -108.0), tip.y() - 13.0, 100.0, 26.0)
+                horizontal = Qt.AlignmentFlag.AlignLeft if dx > 0 else Qt.AlignmentFlag.AlignRight
+                flags = horizontal | Qt.AlignmentFlag.AlignVCenter
+            else:
+                box = QRectF(tip.x() - 84.0, tip.y() + (6.0 if dy > 0 else -32.0), 168.0, 26.0)
+                flags = Qt.AlignmentFlag.AlignCenter
+            draw_label(painter, box, flags, self._labels[direction], color, alpha, pill=True)
 
 
 class ChargeRing:
@@ -185,13 +224,16 @@ class ChargeRing:
         return self._charge
 
     def label(self) -> str:
+        """ป้ายใต้วงแหวน (ตามสไตล์: holo = ตัวพิมพ์ใหญ่)"""
         if self._kind == CHARGE_ARM:
-            return "DISARM" if self._armed else "ARM"
-        if self._kind == CHARGE_LAUNCH:
-            return "APPS"
-        if self._kind is not None and self._kind.startswith(POSE_PREFIX):
-            return self._kind.removeprefix(POSE_PREFIX).upper()  # ชื่อท่าที่สอนเอง
-        return self._fist_label
+            text = "Disarm" if self._armed else "Arm"
+        elif self._kind == CHARGE_LAUNCH:
+            text = "Apps"
+        elif self._kind is not None and self._kind.startswith(POSE_PREFIX):
+            text = self._kind.removeprefix(POSE_PREFIX)  # ชื่อท่าที่สอนเอง
+        else:
+            text = self._fist_label
+        return self._theme.label(text)
 
     def set_state(self, center: QPointF | None, snapshot: EngineSnapshot) -> bool:
         """คืน ``True`` ถ้าสิ่งที่แสดงเปลี่ยน"""
@@ -223,6 +265,25 @@ class ChargeRing:
             return
         theme = self._theme
         cx, cy = self._center.x(), self._center.y()
+        if theme.minimal:  # วงบางชิด reticle: รางจางๆ + เส้นสีเน้นที่เติมจนเต็มวง
+            radius = MINIMAL_CHARGE_RADIUS
+            track = QPainterPath()
+            track.addEllipse(self._center, radius, radius)
+            theme.stroke(painter, track, theme.accent, 1.0, alpha=0.28)
+            fill = arc_path(cx, cy, radius, 0.0, 359.99 * min(self._charge, 1.0))
+            theme.stroke(painter, fill, theme.accent, 2.2)
+            painter.setFont(theme.text_font(12, 600))
+            box = QRectF(cx - CHARGE_HALF_WIDTH, cy + radius + 8.0, CHARGE_HALF_WIDTH * 2.0, 26.0)
+            draw_label(
+                painter,
+                box,
+                Qt.AlignmentFlag.AlignCenter,
+                self.label(),
+                theme.accent,
+                1.0,
+                pill=True,
+            )
+            return
         track = QPainterPath()
         track.addEllipse(self._center, CHARGE_RADIUS, CHARGE_RADIUS)
         glow_stroke(painter, track, theme.accent, 1.0, strength=0.0, alpha=0.3)

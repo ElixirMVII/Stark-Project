@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QFontMetrics, QPainter, QPainterPath
 
@@ -14,7 +16,7 @@ from ..gestures import EngineSnapshot
 from .anim import spring
 from .theme import Theme, draw_label, glow_stroke
 
-__all__ = ["TargetLock"]
+__all__ = ["TargetLock", "kind_text"]
 
 CORNER = 10.0  # ความยาวขาของมุม (logical px)
 PAD = 6.0  # ระยะเผื่อรอบปุ่ม
@@ -23,6 +25,12 @@ FADE_SECONDS = 0.15
 FLASH_SECONDS = 0.3
 LABEL_MAX = 26  # ตัวอักษร
 SEED = 14.0  # ขนาดสี่เหลี่ยมเริ่มต้นรอบ reticle
+MINIMAL_RADIUS = 7.0  # minimal: มุมมนของกรอบรอบปุ่ม
+
+
+def kind_text(control_type: str) -> str:
+    """ชนิดของปุ่มแบบอ่านง่าย: ``MenuItem`` → ``Menu item``"""
+    return re.sub(r"(?<=[a-z])([A-Z])", r" \1", control_type).capitalize()
 
 
 class TargetLock:
@@ -71,9 +79,8 @@ class TargetLock:
             name = target.name.strip().replace("\n", " ")
             if len(name) > LABEL_MAX:
                 name = name[: LABEL_MAX - 1] + "…"
-            self._label = (
-                f"{target.control_type.upper()} · {name}" if name else target.control_type.upper()
-            )
+            kind = self._theme.label(kind_text(target.control_type))
+            self._label = f"{kind} · {name}" if name else kind
 
     def flash(self, now: float) -> None:
         """คลิกบนปุ่มที่ล็อกอยู่"""
@@ -116,6 +123,13 @@ class TargetLock:
         frame = self._current()
         flash = 0.0 if self._flash is None else 1.0 - (now - self._flash) / FLASH_SECONDS
         color = theme.accent if self._squeeze > 0.6 or flash > 0 else theme.primary
+        if theme.minimal:  # กรอบมนบางรอบปุ่ม
+            path = QPainterPath()
+            radius = min(MINIMAL_RADIUS, frame.width() / 2.0, frame.height() / 2.0)
+            path.addRoundedRect(frame, radius, radius)
+            theme.stroke(painter, path, color, 1.3 + 0.6 * max(flash, 0.0), alpha=self._alpha)
+            self._paint_label(painter, frame, color, pill=True, font=theme.text_font(11, 500))
+            return
         length = min(CORNER, frame.width() / 2.5, frame.height() / 2.5)
         path = QPainterPath()
         for cx, cy, sx, sy in (
@@ -128,17 +142,22 @@ class TargetLock:
             path.lineTo(cx, cy)
             path.lineTo(cx, cy + sy * length)
         glow_stroke(painter, path, color, 2.0, strength=1.0 + flash, alpha=self._alpha)
+        self._paint_label(painter, frame, color, pill=False, font=theme.mono_font(11))
 
-        if self._show_label and self._label and self._goal is not None:
-            font = theme.mono_font(11)
-            painter.setFont(font)
-            width = QFontMetrics(font).horizontalAdvance(self._label) + 12.0
-            box = QRectF(frame.left(), frame.bottom() + 4.0, width, 20.0)
-            draw_label(
-                painter,
-                box,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                self._label,
-                color,
-                self._alpha,
-            )
+    def _paint_label(self, painter: QPainter, frame: QRectF, color, *, pill: bool, font) -> None:
+        if not (self._show_label and self._label and self._goal is not None):
+            return
+        painter.setFont(font)
+        width = QFontMetrics(font).horizontalAdvance(self._label) + (20.0 if pill else 12.0)
+        box = QRectF(
+            frame.left(), frame.bottom() + (6.0 if pill else 4.0), width, 22.0 if pill else 20.0
+        )
+        draw_label(
+            painter,
+            box,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self._label,
+            color,
+            self._alpha,
+            pill=pill,
+        )

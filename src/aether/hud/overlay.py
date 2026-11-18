@@ -105,7 +105,10 @@ class HudOverlay(QWidget):
         self._reduce_motion = hud.reduce_motion
         self._reticle = Reticle(self._theme, reduce_motion=hud.reduce_motion)
         burst = PARTICLES_PER_BURST if hud.quality == "high" else PARTICLES_PER_BURST // 2
-        self._particles = None if hud.reduce_motion else ParticlePool(self._theme, per_burst=burst)
+        # minimal: ไม่มีอนุภาคตอนคลิก และไม่มีแถบแสงตอนปัด (เหลือวงคลิกบางๆ กับลูกศรที่สว่าง)
+        self._minimal = self._theme.minimal
+        quiet = hud.reduce_motion or self._minimal
+        self._particles = None if quiet else ParticlePool(self._theme, per_burst=burst)
         self._streak = SwipeStreak(self._theme)
         self._collapse = MinimizeCollapse(self._theme)
         # คืนกรอบ (left, top, right, bottom) ของหน้าต่างที่เพิ่งย่อ — แอปต่อเข้ากับ ActionExecutor
@@ -170,7 +173,7 @@ class HudOverlay(QWidget):
         now = self._clock()
         if boot and self._panels:
             self._boot.start(now, QPointF(self.width() / 2.0, self.height() / 2.0))
-            if self._telemetry is not None and not self._reduce_motion:
+            if self._telemetry is not None and not (self._reduce_motion or self._minimal):
                 self._telemetry.slide_in(now + 0.35)  # Boot v2: แผงสไลด์เข้าหลังวงแหวนเริ่มขยาย
             self._play("boot")
         self._sample_telemetry()
@@ -279,8 +282,9 @@ class HudOverlay(QWidget):
                         direction = event.name.removeprefix("swipe_")
                         self._radial.flash(direction, now)
                         self._refresh("radial")
-                        self._streak.start(direction, now)
-                        self._refresh("streak")
+                        if not self._minimal:
+                            self._streak.start(direction, now)
+                            self._refresh("streak")
                     self._play("swipe")
                 elif event.name.startswith(POSE_PREFIX):  # ท่าที่สอนเอง
                     if here:

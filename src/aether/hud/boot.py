@@ -2,6 +2,9 @@
 (ตัวอักษรสุ่มค่อยๆ กลายเป็น ``SYSTEM ONLINE``) ~1.5 วินาที — แผง telemetry สไลด์เข้าพร้อมกัน (overlay สั่ง)
 
 ``reduce_motion=True``: ไม่มีวงแหวน/การถอดรหัส เหลือแค่ข้อความที่ fade เข้าแล้ว fade ออก
+
+สไตล์ minimal: ชื่อ "AETHER" ตัวบางลอยขึ้นเล็กน้อยพร้อม fade เข้า เส้นบางสีเน้นยืดออกใต้ชื่อ แล้ว "Ready"
+ค่อยๆ ปรากฏ ก่อนทั้งหมดจางหาย (ไม่มีวงแหวน ไม่มีตัวอักษรสุ่ม)
 """
 
 from __future__ import annotations
@@ -28,6 +31,13 @@ DECODE_START = 0.18  # สัดส่วนของ DURATION ที่ตั�
 DECODE_STEP = 0.035  # ตัวถัดไปถอดรหัสช้ากว่าตัวก่อนเท่านี้
 SCRAMBLE_HZ = 24.0  # ตัวอักษรสุ่มเปลี่ยนกี่ครั้งต่อวินาที
 GLYPHS = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789#%&*+<>/\\"
+
+WORDMARK = "AETHER"  # minimal
+WORDMARK_SUBTITLE = "Ready"
+MINIMAL_FADE_IN = 0.5
+MINIMAL_FADE_OUT = 0.4
+MINIMAL_HALF_WIDTH = 190.0
+MINIMAL_HALF_HEIGHT = 70.0
 
 
 def _ease_out(t: float) -> float:
@@ -77,6 +87,13 @@ class BootSequence:
         if self._started is None:
             return QRectF()
         c = self._center
+        if self._theme.minimal:
+            return QRectF(
+                c.x() - MINIMAL_HALF_WIDTH,
+                c.y() - MINIMAL_HALF_HEIGHT,
+                MINIMAL_HALF_WIDTH * 2,
+                MINIMAL_HALF_HEIGHT * 2,
+            )
         return QRectF(c.x() - HALF_EXTENT, c.y() - HALF_EXTENT, HALF_EXTENT * 2, HALF_EXTENT * 2)
 
     def paint(self, painter: QPainter, now: float) -> None:
@@ -90,6 +107,9 @@ class BootSequence:
         theme = self._theme
         color = theme.primary
         cx, cy = self._center.x(), self._center.y()
+        if theme.minimal:
+            self._paint_minimal(painter, elapsed, cx, cy)
+            return
         if self._reduce_motion:
             self._paint_text(painter, TEXT, cx, cy, min(1.0, elapsed / FADE_OUT) * fade, 1.0)
             return
@@ -149,3 +169,32 @@ class BootSequence:
             line.moveTo(cx - half, y)
             line.lineTo(cx + half, y)
         glow_stroke(painter, line, color, 1.2, strength=0.7, alpha=alpha * 0.8)
+
+    def _paint_minimal(self, painter: QPainter, elapsed: float, cx: float, cy: float) -> None:
+        theme = self._theme
+        still = self._reduce_motion
+        appear = 1.0 if still else _ease_out(elapsed / MINIMAL_FADE_IN)
+        fade_in = min(1.0, elapsed / MINIMAL_FADE_IN)
+        fade = min(1.0, (DURATION - elapsed) / MINIMAL_FADE_OUT) * fade_in
+        rise = 0.0 if still else 8.0 * (1.0 - appear)
+
+        painter.setFont(theme.text_font(30, 300, spacing=12.0))
+        width = painter.fontMetrics().horizontalAdvance(WORDMARK)
+        box = QRectF(cx - MINIMAL_HALF_WIDTH, cy - 30.0 + rise, MINIMAL_HALF_WIDTH * 2, 44.0)
+        painter.setPen(with_alpha(theme.primary, fade))
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, WORDMARK)
+
+        reach = 1.0 if still else _ease_out((elapsed - 0.15) / 0.7)
+        half = (width / 2.0 + 10.0) * reach
+        if half > 0.5:
+            pen = QPen(with_alpha(theme.accent, 0.85 * fade), 1.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(cx - half, cy + 22.0), QPointF(cx + half, cy + 22.0))
+
+        subtitle = 1.0 if still else _ease_out((elapsed - 0.45) / 0.4)
+        if subtitle > 0.0:
+            painter.setFont(theme.text_font(12, 400, spacing=3.0))
+            painter.setPen(with_alpha(theme.primary, 0.6 * fade * subtitle))
+            line = QRectF(cx - MINIMAL_HALF_WIDTH, cy + 30.0, MINIMAL_HALF_WIDTH * 2, 24.0)
+            painter.drawText(line, Qt.AlignmentFlag.AlignCenter, WORDMARK_SUBTITLE)

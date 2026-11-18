@@ -111,7 +111,7 @@ def test_lock_springs_from_the_reticle_to_the_target(lock):
     frame = lock._current()
     assert frame.center().x() == pytest.approx(140, abs=1.5)
     assert frame.contains(rect) and lock.alpha == 1.0
-    assert lock.label == "BUTTON · Save" and not lock.rect().isEmpty()
+    assert lock.label == "Button · Save" and not lock.rect().isEmpty()
 
 
 def test_lock_squeezes_when_the_pinch_is_almost_done(lock):
@@ -127,7 +127,8 @@ def test_lock_fades_when_the_target_goes_away(lock):
     target = Target(100, 100, 80, 30, "MenuItem", "x" * 60)
     lock.set_state(QRectF(100, 100, 80, 30), QPointF(140, 115), snapshot(target))
     t = run(lock, 0.5)
-    assert len(lock.label) <= len("MENUITEM · ") + 26
+    assert lock.label.startswith("Menu item · ")
+    assert len(lock.label) <= len("Menu item · ") + 26
     lock.set_state(None, QPointF(140, 115), snapshot(None))
     run(lock, 0.5, t)
     assert lock.alpha == 0.0 and lock.rect().isEmpty()

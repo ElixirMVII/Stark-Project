@@ -69,6 +69,7 @@ from .targeting import TargetFinder
 from .tracker import HandTracker
 from .tray import Tray
 from .tuning import apply_overrides, current_values, save_overrides
+from .ui_style import apply_app_style
 
 __all__ = ["AetherApp", "AppController", "Options", "run", "run_check"]
 
@@ -318,7 +319,7 @@ class AetherApp(QObject):
             self._camera_message = 'พักกล้องอยู่ — เลือก "ใช้กล้องต่อ" ใน tray เพื่อกลับมาใช้'
             log.info("พักกล้องแล้ว (ปล่อยกล้องให้โปรแกรมอื่นใช้ได้)")
             if self._hud is not None:
-                self._hud.set_alert("CAMERA PAUSED")
+                self._hud.set_alert("Camera paused")
             if self._debug_view is not None:
                 self._debug_view.show_message(self._camera_message)
         else:
@@ -587,7 +588,7 @@ class AetherApp(QObject):
                         "DISARMED เอง — ไม่เห็นมือนาน %g นาที (safety.auto_disarm_minutes)", minutes
                     )
                     if self._hud is not None:
-                        self._hud.notify("AUTO DISARM", None)
+                        self._hud.notify("Auto disarmed", None)
                 else:
                     log.info("DISARMED")
                 self.armed_changed.emit(False)
@@ -606,12 +607,12 @@ class AetherApp(QObject):
     def _on_incident_saved(self, path: Path | None) -> None:
         if path is None:
             if self._hud is not None:
-                self._hud.notify("INCIDENT FAILED", "error")
+                self._hud.notify("Incident not saved", "error")
             return
         self._stats.note_incident()
         log.info("จด incident แล้ว: %s", path)
         if self._hud is not None:
-            self._hud.notify("INCIDENT SAVED")
+            self._hud.notify("Incident saved")
 
     def _on_camera_opened(self, description: str) -> None:
         self._camera_info, self._camera_message = description, None
@@ -629,7 +630,7 @@ class AetherApp(QObject):
             log.info("กล้องถูกใช้โดย %s", ", ".join(users))
         self._camera_message = message
         if self._hud is not None:
-            self._hud.set_alert("CAMERA IN USE" if users else "CAMERA LOST")
+            self._hud.set_alert("Camera in use" if users else "Camera lost")
         if self._debug_view is not None:
             self._debug_view.show_message(message)
 
@@ -641,7 +642,7 @@ class AetherApp(QObject):
                 packet.brightness or 0.0,
             )
             if self._hud is not None and self._camera_message is None:
-                self._hud.set_alert("LOW LIGHT")
+                self._hud.set_alert("Low light")
         elif change == "ok" and self._hud is not None and self._camera_message is None:
             self._hud.set_alert(None)
 
@@ -650,7 +651,7 @@ class AetherApp(QObject):
         self._pipeline.shutdown()
         self._camera_message = f"pipeline หยุดทำงาน\n{message}\n(ดูรายละเอียดใน log)"
         if self._hud is not None:
-            self._hud.set_alert("PIPELINE ERROR")
+            self._hud.set_alert("Pipeline error")
         if self._debug_view is not None:
             self._debug_view.show_message(self._camera_message)
         elif self._hud is None and self._quit_on_debug_close:
@@ -1063,6 +1064,7 @@ def run(options: Options) -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("AETHER")
     app.setQuitOnLastWindowClosed(False)
+    apply_app_style(app)
 
     controller = AppController(options)
     if controller.tray is None:
