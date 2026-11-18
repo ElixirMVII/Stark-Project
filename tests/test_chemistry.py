@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections import Counter
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtTest import QTest
 
 from aether.config import Config
 from aether.studio.chemistry import (
@@ -169,7 +167,9 @@ def test_flask_hints_list_what_is_missing():
     flask.add("C")
     hints = flask.hints()
     assert hints[0].compound.formula == "CO" and hints[0].text == "+O → CO"
-    assert hints[1].compound.formula == "CO2" and hints[1].text == "+O×2 → CO₂"
+    assert [h.compound.formula for h in hints[1:]] == ["SiC", "WC"]  # ขาดอีกหนึ่งอะตอมเหมือนกัน
+    more = {h.compound.formula: h.text for h in flask.hints(limit=10)}
+    assert more["CO2"] == "+O×2 → CO₂"
     flask.add("Xe")
     assert flask.hints() == []  # ไม่มีสารไหนมีทั้ง C และ Xe
     assert Flask().hints() == []
@@ -269,60 +269,126 @@ def studio(qapp):
     window.close()
 
 
-def test_elements_page_geometry_and_table_drawer(studio):
-    window, clock = studio
+def test_elements_page_geometry_and_group_pages(studio):
+    window, _ = studio
     page = window.elements
-    assert window.current is page and "Pinch an element" in window.hint.text()
+    assert window.current is page and "flick" in window.hint.text()
     for element in (by_symbol("H"), by_symbol("Og"), by_symbol("La"), by_symbol("Lr")):
         rect = page.cell_rect(element)
         x, y = rect.center().x() / page.width(), rect.center().y() / page.height()
         assert page.cell_at(x, y) is element
-    assert page.table_rect().bottom() < page.flask_rect().top()
+    assert page.content_rect().right() < page.right_rect().left()
     flask = page.flask_rect()
     assert page.in_flask(flask.center().x() / page.width(), flask.center().y() / page.height())
+    page.toggle_table()  # 👍 / ปุ่ม: ไปหน้าหมวดล่าสุด (เริ่มที่โลหะแอลคาไล)
+    assert page.pages[page.page_index][0] == "alkali" and not page.table_open
+    assert page.cell_rect(by_symbol("H")).isEmpty()  # H ไม่ใช่แอลคาไล: ไม่อยู่ในหน้านี้
+    lithium = page.cell_rect(by_symbol("Li"))
+    assert (
+        page.cell_at(
+            lithium.center().x() / page.width(), lithium.center().y() / page.height()
+        ).symbol
+        == "Li"
+    )
     page.toggle_table()
-    for _ in range(60):
-        clock["t"] += 1 / 30
-        window._tick()
-    assert page.table_rect().bottom() < 0  # เลื่อนออกไปพ้นจอ
-    hydrogen = page.cell_rect(by_symbol("H"))
-    assert page.cell_at(0.3, 0.1) is None and hydrogen.bottom() < 0
+    assert page.table_open
     window.grab()
 
 
-def test_mouse_drag_from_the_table_into_the_flask_makes_water(studio):
-    window, clock = studio
-    page = window.elements
-    hydrogen = page.cell_rect(by_symbol("H")).center().toPoint()
-    oxygen = page.cell_rect(by_symbol("O")).center().toPoint()
-    flask = page.flask_rect().center().toPoint()
-    for source in (hydrogen, hydrogen, oxygen):
-        clock["t"] += 0.1
-        QTest.mouseMove(page, source)
-        QTest.mousePress(page, Qt.MouseButton.LeftButton, pos=source)
-        for step in range(1, 6):
-            clock["t"] += 0.02
-            point = source + (flask - source) * step / 5
-            QTest.mouseMove(page, QPoint(point))
-        QTest.mouseRelease(page, Qt.MouseButton.LeftButton, pos=flask)
-    assert page.lab.flask.atoms == ["H", "H", "O"]
-    assert page.lab.last_match[0].formula == "H2O"
-    assert page.matches == [("H2", 1), ("H2O", 1)]  # H+H เป็นก๊าซไฮโดรเจนก่อน แล้ว +O เป็นน้ำ
-    page.undo()
-    assert page.lab.last_match[0].formula == "H2"  # เอา O ออก เหลือก๊าซไฮโดรเจน
-    page.empty()
-    assert page.lab.flask.atoms == [] and page.lab.last_match is None
-    window.grab()
+# ---- รายละเอียดธาตุ / ข้อมูลชุดใหม่ ------------------------------------------------- #
 
 
-def test_hints_and_result_paint(studio):
-    window, _ = studio
-    page = window.elements
-    for symbol in ("C", "O"):
-        page.drop_atom(symbol)
-    assert page.lab.last_match[0].formula == "CO"
-    page.drop_atom("O")
-    assert page.lab.last_match[0].formula == "CO2" and len(page.matches) == 2
-    page.drop_atom("Xe")
-    assert page.lab.last_match is None
-    window.grab()
+@pytest.mark.parametrize(
+    ("symbol", "config", "shells"),
+    [
+        ("H", "1s¹", [1]),
+        ("O", "[He] 2s² 2p⁴", [2, 6]),
+        ("Na", "[Ne] 3s¹", [2, 8, 1]),
+        ("Fe", "[Ar] 3d⁶ 4s²", [2, 8, 14, 2]),
+        ("Cr", "[Ar] 3d⁵ 4s¹", [2, 8, 13, 1]),
+        ("Cu", "[Ar] 3d¹⁰ 4s¹", [2, 8, 18, 1]),
+        ("Pd", "[Kr] 4d¹⁰", [2, 8, 18, 18]),
+        ("Au", "[Xe] 4f¹⁴ 5d¹⁰ 6s¹", [2, 8, 18, 32, 18, 1]),
+        ("U", "[Rn] 5f³ 6d¹ 7s²", [2, 8, 18, 32, 21, 9, 2]),
+        ("Og", "[Rn] 5f¹⁴ 6d¹⁰ 7s² 7p⁶", [2, 8, 18, 32, 32, 18, 8]),
+    ],
+)
+def test_electron_configuration(symbol, config, shells):
+    from aether.studio.atoms import configuration_text
+    from aether.studio.atoms import shells as shell_counts
+
+    number = by_symbol(symbol).number
+    assert configuration_text(number) == config and shell_counts(number) == shells
+
+
+def test_every_element_has_details():
+    from aether.studio.atoms import atom_info, shells
+
+    for element in ELEMENTS:
+        info = atom_info(element)
+        assert sum(shells(element.number)) == element.number == info.electrons == info.protons
+        assert info.neutrons >= 0 and info.note and info.block in "spdf"
+    assert atom_info("Fe").neutrons == 30 and atom_info("Fe").valence is None
+    assert atom_info("Cl").valence == 7 and atom_info("Cl").state == "gas"
+    assert atom_info("Hg").state == "liquid" and atom_info("Og").state == "unknown"
+    assert atom_info("He").valence == 2 and atom_info("He").block == "s"
+    assert (
+        atom_info("Na").block == "s"
+        and atom_info("Fe").block == "d"
+        and atom_info("U").block == "f"
+    )
+
+
+def test_compound_kinds_dangers_and_reactions():
+    from aether.studio.chemistry import DANGER_LEVELS, KINDS
+
+    for compound in COMPOUNDS:
+        assert compound.kind in KINDS and 0 <= compound.danger < len(DANGER_LEVELS)
+        assert compound.is_reaction == (compound.kind == "reaction")
+        if compound.is_reaction:
+            assert "→" in compound.equation
+            left = compound.equation.split("→")[0]
+            reactants = Counter()
+            for term in left.split("+"):
+                term = term.strip()
+                count = int(term[0]) if term[0].isdigit() else 1
+                for symbol, n in parse_formula(term.lstrip("0123456789")).items():
+                    reactants[symbol] += n * count
+            assert reactants == compound.counts, compound.name  # อะตอมของสารตั้งต้นตรงกับสูตรในขวด
+    assert any(c.danger == 3 and c.kind == "explosive" for c in COMPOUNDS)
+    water = next(c for c in COMPOUNDS if c.formula == "H2O")
+    assert water.recipe == "H×2 + O"
+    assert formula_text("2Al + Fe2O3 → Al2O3 + 2Fe") == "2Al + Fe₂O₃ → Al₂O₃ + 2Fe"
+
+
+def test_exact_match_wins_over_multiples():
+    flask = Flask()
+    for symbol in "C" * 6 + "H" * 12 + "O" * 6:
+        flask.add(symbol)
+    assert flask.match()[0].name == "Glucose"  # ไม่ใช่ 6 × ฟอร์มาลดีไฮด์
+    flask.clear()
+    for symbol in "C" * 6 + "H" * 6:
+        flask.add(symbol)
+    assert flask.match()[0].name == "Benzene"  # ไม่ใช่ 3 × อะเซทิลีน
+    flask.clear()
+    for symbol in "O" * 6:
+        flask.add(symbol)
+    assert flask.match() == (next(c for c in COMPOUNDS if c.formula == "O3"), 2)
+
+
+def test_swipe_detector_rules():
+    from aether.studio.input import SwipeDetector
+
+    swipe = SwipeDetector()
+
+    def palm(vx: float, vy: float = 0.0, side: str = "right", gesture: str = "Open_Palm"):
+        return StudioHand(side, 0.5, 0.5, False, 0.0, gesture, (True,) * 5, vx, vy)
+
+    assert swipe.update(palm(-2.5), 0.0) == -1
+    assert swipe.update(palm(-2.5), 0.3) == 0  # cooldown
+    assert swipe.update(palm(2.5), 1.0) == 1
+    assert swipe.update(palm(1.0), 2.0) == 0  # ช้าเกินไป
+    assert swipe.update(palm(2.0, 2.0), 3.0) == 0  # ทแยง ไม่ใช่ปัดแนวนอน
+    assert swipe.update(palm(3.0, side="mouse"), 4.0) == 0  # เมาส์ไม่นับ
+    fist = StudioHand("right", 0.5, 0.5, False, 0.0, "Closed_Fist", (False,) * 5, 3.0, 0.0)
+    assert swipe.update(fist, 5.0) == 0

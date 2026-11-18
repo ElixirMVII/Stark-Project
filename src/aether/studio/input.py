@@ -20,6 +20,7 @@ __all__ = [
     "HoldDetector",
     "StudioHand",
     "StudioInput",
+    "SwipeDetector",
     "mouse_hand",
 ]
 
@@ -183,3 +184,26 @@ class HoldDetector:
 
     def reset(self) -> None:
         self._since, self._fired, self.progress = None, False, 0.0
+
+
+class SwipeDetector:
+    """แบมือแล้วสะบัดซ้าย/ขวา → ``-1`` (ซ้าย) / ``+1`` (ขวา) หนึ่งครั้งต่อการสะบัด (มี cooldown)
+
+    ไม่นับมือจำลองจากเมาส์ (ขยับเมาส์เร็วๆ ไม่ควรเปลี่ยนหน้า — เมาส์ใช้ปุ่ม/ลูกศรแทน) และไม่นับตอนจีบ
+    """
+
+    def __init__(
+        self, speed: float = 1.6, *, cooldown: float = 0.7, axis_ratio: float = 1.5
+    ) -> None:
+        self.speed = speed  # ความกว้างผืนผ้าใบต่อวินาที
+        self.cooldown = cooldown
+        self.axis_ratio = axis_ratio
+        self._until = 0.0
+
+    def update(self, hand: StudioHand | None, now: float) -> int:
+        if hand is None or hand.handedness == "mouse" or not hand.open_palm or now < self._until:
+            return 0
+        if abs(hand.vx) < self.speed or abs(hand.vx) < self.axis_ratio * abs(hand.vy):
+            return 0
+        self._until = now + self.cooldown
+        return 1 if hand.vx > 0 else -1

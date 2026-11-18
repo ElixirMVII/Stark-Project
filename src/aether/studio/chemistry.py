@@ -20,7 +20,9 @@ from .input import HoldDetector, StudioHand
 __all__ = [
     "CATEGORIES",
     "COMPOUNDS",
+    "DANGER_LEVELS",
     "ELEMENTS",
+    "KINDS",
     "MAX_ATOMS",
     "ChemEvent",
     "ChemLab",
@@ -28,6 +30,7 @@ __all__ = [
     "Element",
     "Flask",
     "by_symbol",
+    "compounds_with",
     "formula_text",
     "hill_formula",
     "parse_formula",
@@ -271,8 +274,8 @@ def parse_formula(formula: str) -> Counter[str]:
 
 
 def formula_text(formula: str) -> str:
-    """ตัวเลขห้อยแบบ unicode: ``"H2O"`` → ``"H₂O"``"""
-    return formula.translate(_SUBSCRIPT)
+    """ตัวเลขห้อยแบบ unicode: ``"H2O"`` → ``"H₂O"`` — เลขนำหน้าในสมการ (``"2Na"``) ไม่ห้อย"""
+    return re.sub(r"(?<=[A-Za-z)])\d+", lambda m: m.group(0).translate(_SUBSCRIPT), formula)
 
 
 def hill_formula(counts: Mapping[str, int]) -> str:
@@ -289,14 +292,34 @@ def molar_mass(counts: Mapping[str, int]) -> float:
     return sum(by_symbol(s).mass * n for s, n in counts.items())
 
 
+KINDS: dict[str, tuple[str, str]] = {  # หมวดของสาร: (อังกฤษ, ไทย)
+    "everyday": ("Everyday", "ของใช้ทั่วไป"),
+    "fun": ("Fun", "สนุก/น่าทึ่ง"),
+    "toxic": ("Toxic", "พิษ"),
+    "corrosive": ("Corrosive", "กัดกร่อน"),
+    "explosive": ("Explosive", "ระเบิด/ติดไฟ"),
+    "reaction": ("Reaction", "ปฏิกิริยา"),
+}
+# ระดับอันตราย: (อังกฤษ, ไทย, สี)
+DANGER_LEVELS = (
+    ("Safe", "ปลอดภัย", "#7CC4A0"),
+    ("Caution", "ระวัง", "#D9A85B"),
+    ("Dangerous", "อันตราย", "#E5484D"),
+    ("Extreme", "อันตรายมาก", "#FF2D55"),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class Compound:
-    formula: str  # เขียนแบบที่คนคุ้น (CH3COOH, Ca(OH)2)
+    formula: str  # เขียนแบบที่คนคุ้น (CH3COOH, Ca(OH)2) — ปฏิกิริยา: อะตอมของสารตั้งต้นรวมกัน
     name: str
     thai: str
     fact: str
     color: str
-    energetic: bool = False  # ปฏิกิริยารุนแรง/ปล่อยพลังงานมาก (HUD วาบ)
+    kind: str = "everyday"
+    danger: int = 0  # 0–3 ดู DANGER_LEVELS
+    energetic: bool = False  # ปล่อยพลังงานมาก (วงวาบสีขาว)
+    equation: str = ""  # ปฏิกิริยา: สมการที่แสดง เช่น "2Na + 2H2O → 2NaOH + H2"
 
     @property
     def counts(self) -> Counter[str]:
@@ -304,7 +327,11 @@ class Compound:
 
     @property
     def display(self) -> str:
-        return formula_text(self.formula)
+        return formula_text(self.equation or self.formula)
+
+    @property
+    def is_reaction(self) -> bool:
+        return bool(self.equation)
 
     @property
     def molar_mass(self) -> float:
@@ -314,122 +341,129 @@ class Compound:
     def atoms(self) -> int:
         return sum(self.counts.values())
 
+    @property
+    def recipe(self) -> str:
+        """อะตอมที่ต้องใส่ลงขวด เช่น ``"H×2 + O"`` (ตามลำดับในสูตร)"""
+        return " + ".join(f"{s}×{n}" if n > 1 else s for s, n in self.counts.items())
 
+    @property
+    def danger_label(self) -> tuple[str, str, str]:
+        return DANGER_LEVELS[self.danger]
+
+
+def _c(
+    formula, name, thai, fact, color, kind="everyday", danger=0, *, energetic=False, equation=""
+):
+    return Compound(formula, name, thai, fact, color, kind, danger, energetic, equation)
+
+
+# fmt: off
 COMPOUNDS: tuple[Compound, ...] = (
-    Compound(
-        "H2",
-        "Hydrogen gas",
-        "ก๊าซไฮโดรเจน",
-        "เบาที่สุดในจักรวาล ติดไฟง่าย ใช้เป็นเชื้อเพลิงจรวด",
-        "#F2F4F7",
-        True,
-    ),
-    Compound("O2", "Oxygen gas", "ก๊าซออกซิเจน", "ราว 21% ของอากาศที่เราหายใจ", "#9FD3FF"),
-    Compound("N2", "Nitrogen gas", "ก๊าซไนโตรเจน", "ราว 78% ของอากาศ เฉื่อยมาก", "#C9D1DB"),
-    Compound(
-        "Cl2", "Chlorine gas", "ก๊าซคลอรีน", "ก๊าซสีเหลืองแกมเขียว เป็นพิษ ใช้ฆ่าเชื้อในน้ำประปา", "#C8E07A"
-    ),
-    Compound("O3", "Ozone", "โอโซน", "ชั้นโอโซนช่วยกรองรังสียูวีจากดวงอาทิตย์", "#8EC8FF"),
-    Compound("H2O", "Water", "น้ำ", "ไฮโดรเจนกับออกซิเจนรวมกันแล้วปล่อยพลังงานสูงมาก", "#5B9BD5", True),
-    Compound(
-        "H2O2",
-        "Hydrogen peroxide",
-        "ไฮโดรเจนเปอร์ออกไซด์",
-        "ใช้ล้างแผลและฟอกสี สลายตัวเป็นน้ำกับออกซิเจน",
-        "#A9D4F5",
-    ),
-    Compound(
-        "CO2", "Carbon dioxide", "คาร์บอนไดออกไซด์", "ฟองในน้ำอัดลม และก๊าซเรือนกระจกตัวหลัก", "#C9D1DB"
-    ),
-    Compound(
-        "CO", "Carbon monoxide", "คาร์บอนมอนอกไซด์", "ก๊าซพิษไร้สีไร้กลิ่น เกิดจากการเผาไหม้ไม่สมบูรณ์", "#AAB2BC"
-    ),
-    Compound("CH4", "Methane", "มีเทน", "ส่วนประกอบหลักของก๊าซธรรมชาติ", "#B7E3C8", True),
-    Compound("C2H2", "Acetylene", "อะเซทิลีน", "ก๊าซเชื่อมโลหะ เปลวไฟร้อนกว่า 3,000 °C", "#E8D9A8", True),
-    Compound("C2H4", "Ethylene", "เอทิลีน", "ฮอร์โมนพืชที่ทำให้ผลไม้สุก", "#D8EFC0"),
-    Compound("C3H8", "Propane", "โพรเพน", "ส่วนหนึ่งของก๊าซหุงต้ม (LPG)", "#E0E8F0", True),
-    Compound("C6H6", "Benzene", "เบนซีน", "โมเลกุลรูปวงแหวนหกเหลี่ยม เป็นสารก่อมะเร็ง", "#EDE3C8"),
-    Compound("CH3OH", "Methanol", "เมทานอล", "แอลกอฮอล์ที่เป็นพิษ ดื่มแล้วอาจตาบอดได้", "#D5E6F5"),
-    Compound("C2H5OH", "Ethanol", "เอทานอล", "แอลกอฮอล์ในเครื่องดื่มและเจลล้างมือ", "#E6F0FA"),
-    Compound("CH3COOH", "Acetic acid", "กรดแอซีติก", "ทำให้น้ำส้มสายชูมีรสเปรี้ยว", "#F5EBD0"),
-    Compound("CH2O", "Formaldehyde", "ฟอร์มาลดีไฮด์", "ละลายน้ำแล้วคือฟอร์มาลิน ใช้ดองตัวอย่าง", "#E6E6E6"),
-    Compound("NH3", "Ammonia", "แอมโมเนีย", "กลิ่นฉุน เป็นวัตถุดิบหลักของปุ๋ย", "#D9ECFF"),
-    Compound("N2O", "Nitrous oxide", "ไนตรัสออกไซด์", "ก๊าซหัวเราะ ใช้เป็นยาสลบอ่อนๆ", "#E0E7F2"),
-    Compound("NO2", "Nitrogen dioxide", "ไนโตรเจนไดออกไซด์", "ก๊าซสีน้ำตาลแดงในหมอกควันพิษ", "#B5651D"),
-    Compound("HNO3", "Nitric acid", "กรดไนตริก", "กรดแก่ ใช้ผลิตปุ๋ยและวัตถุระเบิด", "#F2E6B0"),
-    Compound("HCl", "Hydrochloric acid", "กรดไฮโดรคลอริก", "กรดในกระเพาะอาหารของเรา", "#E9F2C9"),
-    Compound("HF", "Hydrofluoric acid", "กรดไฮโดรฟลูออริก", "กัดแก้วได้ ใช้แกะลายบนแก้ว", "#E2F5E9"),
-    Compound("H2S", "Hydrogen sulfide", "ไฮโดรเจนซัลไฟด์", "ก๊าซกลิ่นไข่เน่า เป็นพิษ", "#EFE7A0"),
-    Compound(
-        "SO2",
-        "Sulfur dioxide",
-        "ซัลเฟอร์ไดออกไซด์",
-        "ออกมาจากภูเขาไฟและการเผาถ่านหิน ทำให้เกิดฝนกรด",
-        "#E6DFA0",
-    ),
-    Compound("H2SO4", "Sulfuric acid", "กรดซัลฟิวริก", "น้ำกรดในแบตเตอรี่รถยนต์", "#F0E8C0"),
-    Compound(
-        "NaCl",
-        "Sodium chloride",
-        "เกลือแกง",
-        "โลหะที่ระเบิดเมื่อโดนน้ำ + ก๊าซพิษ = เกลือที่เรากิน",
-        "#F2F4F7",
-        True,
-    ),
-    Compound("KCl", "Potassium chloride", "โพแทสเซียมคลอไรด์", "ใช้แทนเกลือในเกลือโซเดียมต่ำ", "#F0F0F5"),
-    Compound("NaF", "Sodium fluoride", "โซเดียมฟลูออไรด์", "ฟลูออไรด์ในยาสีฟันช่วยป้องกันฟันผุ", "#EEF6F0"),
-    Compound("NaOH", "Sodium hydroxide", "โซดาไฟ", "ด่างแก่ ใช้ทำสบู่และล้างท่อตัน", "#F5F5F5"),
-    Compound(
-        "NaClO", "Sodium hypochlorite", "โซเดียมไฮโปคลอไรต์", "สารฟอกขาวในน้ำยาซักผ้าขาว", "#F2F7D9"
-    ),
-    Compound("NaHCO3", "Sodium bicarbonate", "โซเดียมไบคาร์บอเนต", "เบกกิ้งโซดา ทำให้ขนมฟู", "#FAFAFA"),
-    Compound("CaCO3", "Calcium carbonate", "แคลเซียมคาร์บอเนต", "หินปูน ชอล์ก และเปลือกหอย", "#F2EEE6"),
-    Compound("CaO", "Calcium oxide", "ปูนดิบ", "เติมน้ำแล้วร้อนจัด กลายเป็นปูนสุก", "#F5F2EA", True),
-    Compound("Ca(OH)2", "Calcium hydroxide", "ปูนสุก", "ใช้ปรับดินเปรี้ยวและทำปูนฉาบ", "#F7F5EF"),
-    Compound(
-        "CaCl2", "Calcium chloride", "แคลเซียมคลอไรด์", "สารดูดความชื้นในกล่องกันชื้นบางแบบ", "#F5F5F5"
-    ),
-    Compound(
-        "MgO",
-        "Magnesium oxide",
-        "แมกนีเซียมออกไซด์",
-        "เกิดตอนเผาแมกนีเซียม ให้แสงขาวจ้าแบบพลุ",
-        "#FFFFFF",
-        True,
-    ),
-    Compound(
-        "Al2O3",
-        "Aluminium oxide",
-        "อะลูมิเนียมออกไซด์",
-        "ผลึกของมันคือทับทิมและไพลิน (เมื่อมีโลหะอื่นเจือ)",
-        "#E8C7D0",
-    ),
-    Compound("SiO2", "Silicon dioxide", "ซิลิคอนไดออกไซด์", "ทราย ควอตซ์ และวัตถุดิบทำแก้ว", "#EDE6D6"),
-    Compound(
-        "Fe2O3", "Iron(III) oxide", "สนิมเหล็ก", "สนิมสีน้ำตาลแดงที่เกิดเมื่อเหล็กเจอน้ำและอากาศ", "#A0522D"
-    ),
-    Compound("Fe3O4", "Magnetite", "แมกนีไทต์", "แร่เหล็กที่เป็นแม่เหล็กได้เองตามธรรมชาติ", "#5A5A5A"),
-    Compound(
-        "CuO", "Copper(II) oxide", "คอปเปอร์(II) ออกไซด์", "ผงสีดำที่เกิดเมื่อเผาทองแดงในอากาศ", "#4A4A4A"
-    ),
-    Compound("CuSO4", "Copper(II) sulfate", "จุนสี", "ผลึกสีฟ้าสด (เมื่อมีน้ำผลึก)", "#2F80ED"),
-    Compound("ZnO", "Zinc oxide", "ซิงค์ออกไซด์", "ใช้ในครีมกันแดดและแป้งเด็ก", "#FFFFFF"),
-    Compound("TiO2", "Titanium dioxide", "ไทเทเนียมไดออกไซด์", "สีขาวในสีทาบ้านและครีมกันแดด", "#FFFFFF"),
-    Compound(
-        "AgCl",
-        "Silver chloride",
-        "ซิลเวอร์คลอไรด์",
-        "ตะกอนขาวที่คล้ำลงเมื่อโดนแสง ใช้ในฟิล์มถ่ายรูปยุคแรก",
-        "#E8E8E8",
-    ),
-    Compound("KNO3", "Potassium nitrate", "ดินประสิว", "ส่วนผสมหลักของดินปืน", "#F5F5F0", True),
-    Compound(
-        "NH4Cl", "Ammonium chloride", "แอมโมเนียมคลอไรด์", "ใช้ในถ่านไฟฉายแบบเก่าและงานบัดกรี", "#F5F5F5"
-    ),
-    Compound(
-        "XeF4", "Xenon tetrafluoride", "ซีนอนเตตระฟลูออไรด์", "พิสูจน์ว่าแก๊สมีตระกูลก็ทำปฏิกิริยาได้", "#E8F4FF"
-    ),
+    # ---- ก๊าซธาตุคู่ ----
+    _c("H2", "Hydrogen gas", "ก๊าซไฮโดรเจน", "เบาที่สุดในจักรวาล ติดไฟง่ายมาก ใช้เป็นเชื้อเพลิงจรวด", "#F2F4F7", "explosive", 2, energetic=True),
+    _c("O2", "Oxygen gas", "ก๊าซออกซิเจน", "ราว 21% ของอากาศที่เราหายใจ ช่วยให้ไฟติด", "#9FD3FF"),
+    _c("N2", "Nitrogen gas", "ก๊าซไนโตรเจน", "ราว 78% ของอากาศ เฉื่อยมาก ไนโตรเจนเหลวเย็นถึง −196 °C", "#C9D1DB"),
+    _c("Cl2", "Chlorine gas", "ก๊าซคลอรีน", "ก๊าซสีเหลืองแกมเขียว เป็นพิษร้ายแรง ใช้ฆ่าเชื้อในน้ำประปา", "#C8E07A", "toxic", 3),
+    _c("O3", "Ozone", "โอโซน", "ชั้นโอโซนกรองรังสียูวี แต่บนพื้นดินระคายเคืองปอด", "#8EC8FF", "toxic", 1),
+    # ---- ของใช้ / ชีวิตประจำวัน ----
+    _c("H2O", "Water", "น้ำ", "ไฮโดรเจนกับออกซิเจนรวมกันแล้วปล่อยพลังงานสูงมาก", "#5B9BD5", energetic=True),
+    _c("H2O2", "Hydrogen peroxide", "ไฮโดรเจนเปอร์ออกไซด์", "ใช้ล้างแผลและฟอกสี สลายตัวเป็นน้ำกับออกซิเจน", "#A9D4F5", "corrosive", 1),
+    _c("CO2", "Carbon dioxide", "คาร์บอนไดออกไซด์", "ฟองในน้ำอัดลม น้ำแข็งแห้ง และก๊าซเรือนกระจกตัวหลัก", "#C9D1DB"),
+    _c("H2CO3", "Carbonic acid", "กรดคาร์บอนิก", "เกิดเมื่อ CO₂ ละลายน้ำ ทำให้น้ำอัดลมซ่าและเปรี้ยวนิดๆ", "#DCEBF5", "fun"),
+    _c("NaCl", "Sodium chloride", "เกลือแกง", "โลหะที่ระเบิดเมื่อโดนน้ำ + ก๊าซพิษ = เกลือที่เรากิน", "#F2F4F7", energetic=True),
+    _c("KCl", "Potassium chloride", "โพแทสเซียมคลอไรด์", "ใช้แทนเกลือในเกลือโซเดียมต่ำ", "#F0F0F5"),
+    _c("NaF", "Sodium fluoride", "โซเดียมฟลูออไรด์", "ฟลูออไรด์ในยาสีฟันช่วยป้องกันฟันผุ", "#EEF6F0", "everyday", 1),
+    _c("NaHCO3", "Sodium bicarbonate", "เบกกิ้งโซดา", "ทำให้ขนมฟู และดับกลิ่นตู้เย็น", "#FAFAFA"),
+    _c("CaCO3", "Calcium carbonate", "แคลเซียมคาร์บอเนต", "หินปูน ชอล์ก ไข่มุก และเปลือกหอย", "#F2EEE6"),
+    _c("Ca(OH)2", "Calcium hydroxide", "ปูนสุก", "ใช้ปรับดินเปรี้ยวและทำปูนฉาบ", "#F7F5EF", "everyday", 1),
+    _c("CaCl2", "Calcium chloride", "แคลเซียมคลอไรด์", "สารดูดความชื้น และโรยถนนละลายหิมะ", "#F5F5F5"),
+    _c("SiO2", "Silicon dioxide", "ซิลิคอนไดออกไซด์", "ทราย ควอตซ์ และวัตถุดิบทำแก้ว", "#EDE6D6"),
+    _c("Fe2O3", "Iron(III) oxide", "สนิมเหล็ก", "สนิมสีน้ำตาลแดงที่เกิดเมื่อเหล็กเจอน้ำและอากาศ", "#A0522D"),
+    _c("CuO", "Copper(II) oxide", "คอปเปอร์(II) ออกไซด์", "ผงสีดำที่เกิดเมื่อเผาทองแดงในอากาศ", "#4A4A4A"),
+    _c("ZnO", "Zinc oxide", "ซิงค์ออกไซด์", "ใช้ในครีมกันแดดและแป้งเด็ก", "#FFFFFF"),
+    _c("TiO2", "Titanium dioxide", "ไทเทเนียมไดออกไซด์", "สีขาวในสีทาบ้าน ยาสีฟัน และครีมกันแดด", "#FFFFFF"),
+    _c("NH4Cl", "Ammonium chloride", "แอมโมเนียมคลอไรด์", "ใช้ในถ่านไฟฉายแบบเก่าและงานบัดกรี", "#F5F5F5"),
+    _c("C2H5OH", "Ethanol", "เอทานอล", "แอลกอฮอล์ในเครื่องดื่มและเจลล้างมือ ติดไฟได้", "#E6F0FA", "everyday", 1),
+    _c("CH3COOH", "Acetic acid", "กรดแอซีติก", "ทำให้น้ำส้มสายชูมีรสเปรี้ยว", "#F5EBD0"),
+    _c("C3H6O", "Acetone", "แอซีโตน", "น้ำยาล้างเล็บ ระเหยเร็วและติดไฟง่าย", "#EAF2F8", "everyday", 1),
+    _c("CH4N2O", "Urea", "ยูเรีย", "สารในปัสสาวะ และเป็นปุ๋ยไนโตรเจนที่ใช้มากที่สุดในโลก", "#F5F5F0"),
+    _c("C6H12O6", "Glucose", "กลูโคส", "น้ำตาลในเลือด แหล่งพลังงานหลักของร่างกาย", "#FFF4D6"),
+    _c("C6H8O7", "Citric acid", "กรดซิตริก", "ความเปรี้ยวของมะนาวและส้ม", "#FFF6B0"),
+    _c("C9H8O4", "Aspirin", "แอสไพริน", "ยาแก้ปวด ลดไข้ ต้นกำเนิดมาจากเปลือกต้นหลิว", "#FFFFFF"),
+    _c("C2H4", "Ethylene", "เอทิลีน", "ฮอร์โมนพืชที่ทำให้ผลไม้สุก ใช้ผลิตพลาสติก PE", "#D8EFC0", "everyday", 1),
+    # ---- สนุก / น่าทึ่ง ----
+    _c("C8H10N4O2", "Caffeine", "คาเฟอีน", "สารในกาแฟและชาที่ทำให้ตื่นตัว", "#C8A27A", "fun"),
+    _c("C8H8O3", "Vanillin", "วานิลลิน", "สารที่ให้กลิ่นวานิลลา", "#F3E5C0", "fun"),
+    _c("NaC5H8NO4", "Monosodium glutamate", "ผงชูรส", "ให้รสอูมามิ (รสกลมกล่อม)", "#FFFFFF", "fun"),
+    _c("SF6", "Sulfur hexafluoride", "ซัลเฟอร์เฮกซะฟลูออไรด์", "ก๊าซหนักมาก สูดแล้วเสียงทุ้มต่ำ (ตรงข้ามกับฮีเลียม)", "#E8F0FF", "fun"),
+    _c("N2O", "Nitrous oxide", "ก๊าซหัวเราะ", "ทำให้รู้สึกเคลิ้ม ใช้เป็นยาสลบอ่อนๆ และเพิ่มแรงเครื่องยนต์", "#E0E7F2", "fun", 1),
+    _c("MgO", "Magnesium oxide", "แมกนีเซียมออกไซด์", "เกิดตอนเผาแมกนีเซียม ให้แสงขาวจ้าแบบพลุ", "#FFFFFF", "fun", energetic=True),
+    _c("Al2O3", "Aluminium oxide", "อะลูมิเนียมออกไซด์", "ผลึกของมันคือทับทิมและไพลิน (เมื่อมีโลหะอื่นเจือ)", "#E8C7D0", "fun"),
+    _c("Fe3O4", "Magnetite", "แมกนีไทต์", "แร่เหล็กที่เป็นแม่เหล็กได้เองตามธรรมชาติ", "#5A5A5A", "fun"),
+    _c("FeS2", "Pyrite", "ไพไรต์ (ทองคนโง่)", "แร่สีทองแวววาวที่ทำให้นักขุดทองหลงดีใจ", "#D6B67A", "fun"),
+    _c("SiC", "Silicon carbide", "ซิลิคอนคาร์ไบด์", "แข็งเกือบเท่าเพชร ใช้ทำกระดาษทรายและเบรกรถแข่ง", "#5F6B73", "fun"),
+    _c("WC", "Tungsten carbide", "ทังสเตนคาร์ไบด์", "แข็งมาก ใช้ทำดอกสว่านและหัวปากกาลูกลื่น", "#8C939D", "fun"),
+    _c("GaAs", "Gallium arsenide", "แกลเลียมอาร์เซไนด์", "สารกึ่งตัวนำในไฟ LED และแผงโซลาร์บนดาวเทียม", "#4A4A5A", "fun", 2),
+    _c("LiCoO2", "Lithium cobalt oxide", "ลิเทียมโคบอลต์ออกไซด์", "ขั้วบวกของแบตเตอรี่มือถือ", "#2F4F8F", "fun", 1),
+    _c("KO2", "Potassium superoxide", "โพแทสเซียมซูเปอร์ออกไซด์", "ปล่อยออกซิเจนเมื่อเจอลมหายใจ ใช้ในเครื่องช่วยหายใจและยานอวกาศ", "#F2D06B", "fun", 2),
+    _c("AgCl", "Silver chloride", "ซิลเวอร์คลอไรด์", "ตะกอนขาวที่คล้ำลงเมื่อโดนแสง ใช้ในฟิล์มถ่ายรูปยุคแรก", "#E8E8E8", "fun"),
+    _c("CuSO4", "Copper(II) sulfate", "จุนสี", "ผลึกสีฟ้าสด (เมื่อมีน้ำผลึก) เป็นพิษต่อสัตว์น้ำ", "#2F80ED", "fun", 1),
+    _c("XeF4", "Xenon tetrafluoride", "ซีนอนเตตระฟลูออไรด์", "พิสูจน์ว่าแก๊สมีตระกูลก็ทำปฏิกิริยาได้", "#E8F4FF", "fun", 2),
+    # ---- เชื้อเพลิง / ติดไฟ / ระเบิด ----
+    _c("CH4", "Methane", "มีเทน", "ก๊าซธรรมชาติ ติดไฟง่าย วัวเรอออกมาวันละหลายร้อยลิตร", "#B7E3C8", "explosive", 2, energetic=True),
+    _c("C3H8", "Propane", "โพรเพน", "ส่วนหนึ่งของก๊าซหุงต้ม (LPG)", "#E0E8F0", "explosive", 2, energetic=True),
+    _c("C2H2", "Acetylene", "อะเซทิลีน", "ก๊าซเชื่อมโลหะ เปลวไฟร้อนกว่า 3,000 °C", "#E8D9A8", "explosive", 2, energetic=True),
+    _c("KNO3", "Potassium nitrate", "ดินประสิว", "ส่วนผสมหลักของดินปืนสีดำ และใช้ถนอมเนื้อสัตว์", "#F5F5F0", "explosive", 2, energetic=True),
+    _c("KClO3", "Potassium chlorate", "โพแทสเซียมคลอเรต", "สารออกซิไดซ์แรง ใช้ในหัวไม้ขีดไฟและพลุ", "#F5F5F5", "explosive", 2, energetic=True),
+    _c("NH4NO3", "Ammonium nitrate", "แอมโมเนียมไนเตรต", "ปุ๋ยที่ระเบิดได้ เคยเกิดระเบิดครั้งใหญ่ที่ท่าเรือเบรุตปี 2020", "#F5F5F5", "explosive", 3, energetic=True),
+    _c("NI3", "Nitrogen triiodide", "ไนโตรเจนไตรไอโอไดด์", "ไวมากจนแค่ขนนกแตะก็ระเบิด เป็นควันสีม่วง", "#6B3FA0", "explosive", 3, energetic=True),
+    _c("C7H5N3O6", "TNT (trinitrotoluene)", "ทีเอ็นที", "วัตถุระเบิดที่ใช้เป็นหน่วยวัดพลังระเบิด (ตันทีเอ็นที)", "#F2E2A0", "explosive", 3, energetic=True),
+    _c("C3H5N3O9", "Nitroglycerin", "ไนโตรกลีเซอรีน", "ระเบิดเมื่อกระแทก โนเบลทำให้ปลอดภัยขึ้นเป็นไดนาไมต์ — และยังเป็นยารักษาโรคหัวใจ", "#F5EFD0", "explosive", 3, energetic=True),
+    _c("N2H4", "Hydrazine", "ไฮดราซีน", "เชื้อเพลิงจรวดและดาวเทียม เป็นพิษและกัดกร่อน", "#E3F0FF", "explosive", 3, energetic=True),
+    _c("NaN3", "Sodium azide", "โซเดียมเอไซด์", "สลายเป็นก๊าซไนโตรเจนในพริบตา ใช้พองถุงลมนิรภัย (พิษร้ายแรง)", "#F5F5F5", "explosive", 3, energetic=True),
+    # ---- พิษ ----
+    _c("CO", "Carbon monoxide", "คาร์บอนมอนอกไซด์", "ก๊าซพิษไร้สีไร้กลิ่น เกิดจากการเผาไหม้ไม่สมบูรณ์", "#AAB2BC", "toxic", 3),
+    _c("HCN", "Hydrogen cyanide", "ไฮโดรเจนไซยาไนด์", "ก๊าซพิษร้ายแรงมาก กลิ่นอัลมอนด์ขม", "#E8F5E0", "toxic", 3),
+    _c("COCl2", "Phosgene", "ฟอสจีน", "ก๊าซพิษที่ใช้ในสงครามโลกครั้งที่ 1 ปัจจุบันใช้ผลิตพลาสติก", "#E5EDD0", "toxic", 3),
+    _c("H2S", "Hydrogen sulfide", "ไฮโดรเจนซัลไฟด์", "ก๊าซกลิ่นไข่เน่า ความเข้มข้นสูงทำให้หมดสติทันที", "#EFE7A0", "toxic", 3),
+    _c("PH3", "Phosphine", "ฟอสฟีน", "ก๊าซพิษกลิ่นเหมือนปลาเน่า", "#E8EDE0", "toxic", 3),
+    _c("NH3", "Ammonia", "แอมโมเนีย", "กลิ่นฉุน แสบตา เป็นวัตถุดิบหลักของปุ๋ย", "#D9ECFF", "toxic", 2),
+    _c("NO2", "Nitrogen dioxide", "ไนโตรเจนไดออกไซด์", "ก๊าซสีน้ำตาลแดงในหมอกควันพิษ", "#B5651D", "toxic", 2),
+    _c("SO2", "Sulfur dioxide", "ซัลเฟอร์ไดออกไซด์", "ออกมาจากภูเขาไฟและการเผาถ่านหิน ทำให้เกิดฝนกรด", "#E6DFA0", "toxic", 2),
+    _c("CH3OH", "Methanol", "เมทานอล", "แอลกอฮอล์ที่เป็นพิษ ดื่มแล้วอาจตาบอดได้", "#D5E6F5", "toxic", 2),
+    _c("CH2O", "Formaldehyde", "ฟอร์มาลดีไฮด์", "ละลายน้ำแล้วคือฟอร์มาลิน ใช้ดองตัวอย่าง", "#E6E6E6", "toxic", 2),
+    _c("C6H6", "Benzene", "เบนซีน", "โมเลกุลรูปวงแหวนหกเหลี่ยม เป็นสารก่อมะเร็ง", "#EDE3C8", "toxic", 2),
+    _c("CHCl3", "Chloroform", "คลอโรฟอร์ม", "เคยใช้เป็นยาสลบในอดีต ทำลายตับ", "#EEF2F6", "toxic", 2),
+    _c("CCl4", "Carbon tetrachloride", "คาร์บอนเตตระคลอไรด์", "เคยใช้ในถังดับเพลิงและน้ำยาซักแห้ง ทำลายตับและชั้นโอโซน", "#EAF0F0", "toxic", 2),
+    _c("HgS", "Cinnabar", "ชาด", "แร่สีแดงสด ใช้เป็นสีแดงโบราณ มีปรอทเป็นพิษ", "#C0392B", "toxic", 2),
+    _c("UF6", "Uranium hexafluoride", "ยูเรเนียมเฮกซะฟลูออไรด์", "ก๊าซที่ใช้เสริมสมรรถนะยูเรเนียม กัมมันตรังสีและกัดกร่อน", "#E8F0D8", "toxic", 3),
+    # ---- กัดกร่อน ----
+    _c("HCl", "Hydrochloric acid", "กรดไฮโดรคลอริก", "กรดในกระเพาะอาหารของเรา และน้ำยาล้างห้องน้ำ", "#E9F2C9", "corrosive", 2),
+    _c("HF", "Hydrofluoric acid", "กรดไฮโดรฟลูออริก", "กัดแก้วได้ ซึมผ่านผิวหนังไปทำลายกระดูก", "#E2F5E9", "corrosive", 3),
+    _c("HNO3", "Nitric acid", "กรดไนตริก", "กรดแก่ ทำให้ผิวหนังเหลือง ใช้ผลิตปุ๋ยและวัตถุระเบิด", "#F2E6B0", "corrosive", 3),
+    _c("H2SO4", "Sulfuric acid", "กรดซัลฟิวริก", "น้ำกรดแบตเตอรี่ ดูดน้ำจากน้ำตาลจนกลายเป็นถ่านสีดำ", "#F0E8C0", "corrosive", 3),
+    _c("NaOH", "Sodium hydroxide", "โซดาไฟ", "ด่างแก่ ใช้ทำสบู่และล้างท่อตัน กัดผิวหนัง", "#F5F5F5", "corrosive", 2),
+    _c("NaClO", "Sodium hypochlorite", "น้ำยาฟอกขาว", "สารฟอกขาวในน้ำยาซักผ้าขาว ห้ามผสมกับแอมโมเนียหรือกรด", "#F2F7D9", "corrosive", 1),
+    _c("CaO", "Calcium oxide", "ปูนดิบ", "เติมน้ำแล้วร้อนจัด กลายเป็นปูนสุก", "#F5F2EA", "corrosive", 1, energetic=True),
+    # ---- ปฏิกิริยา (ใส่สารตั้งต้นครบ = เห็นผลของปฏิกิริยา) ----
+    _c("Li2H4O2", "Lithium + water", "ลิเทียมลงน้ำ", "ฟองฟู่ช้าๆ ลิเทียมลอยวน ไม่ระเบิดแรงเท่าโซเดียม", "#E5795E", "reaction", 1, equation="2Li + 2H2O → 2LiOH + H2"),
+    _c("Na2H4O2", "Sodium + water", "โซเดียมลงน้ำ", "โซเดียมวิ่งพล่านบนผิวน้ำ ลุกเป็นไฟสีเหลืองแล้วระเบิด", "#E5795E", "reaction", 3, energetic=True, equation="2Na + 2H2O → 2NaOH + H2"),
+    _c("K2H4O2", "Potassium + water", "โพแทสเซียมลงน้ำ", "ลุกเป็นไฟสีม่วงทันทีและระเบิดรุนแรงกว่าโซเดียม", "#B392F0", "reaction", 3, energetic=True, equation="2K + 2H2O → 2KOH + H2"),
+    _c("Cs2H4O2", "Caesium + water", "ซีเซียมลงน้ำ", "ระเบิดทันทีที่แตะน้ำ แรงจนภาชนะแตก", "#FFD166", "reaction", 3, energetic=True, equation="2Cs + 2H2O → 2CsOH + H2"),
+    _c("Al2Fe2O3", "Thermite", "เทอร์ไมต์", "ปล่อยความร้อนกว่า 2,500 °C จนได้เหล็กหลอมเหลวไหลออกมา ใช้เชื่อมรางรถไฟ", "#FF8C42", "reaction", 3, energetic=True, equation="2Al + Fe2O3 → Al2O3 + 2Fe"),
+    _c("CH4O4", "Burning methane", "การเผามีเทน", "เปลวไฟสีฟ้าของเตาแก๊ส ได้คาร์บอนไดออกไซด์กับน้ำ", "#5B9BD5", "reaction", 2, energetic=True, equation="CH4 + 2O2 → CO2 + 2H2O"),
+    _c("NaC3H5O5", "Baking soda volcano", "ภูเขาไฟเบกกิ้งโซดา", "ฟองก๊าซ CO₂ พุ่งฟู่เป็นภูเขาไฟจำลอง", "#F5EBD0", "reaction", 0, equation="NaHCO3 + CH3COOH → CH3COONa + H2O + CO2"),
+    _c("ZnH2Cl2", "Zinc + hydrochloric acid", "สังกะสีในกรดเกลือ", "ฟองก๊าซไฮโดรเจนผุดขึ้น จุดไฟแล้วดังป๊อก", "#C9D1DB", "reaction", 1, equation="Zn + 2HCl → ZnCl2 + H2"),
+    _c("CuH4N4O12", "Copper + nitric acid", "ทองแดงในกรดไนตริก", "ควันพิษสีน้ำตาลแดงพวยพุ่ง สารละลายกลายเป็นสีฟ้าเขียว", "#3FA7A0", "reaction", 2, equation="Cu + 4HNO3 → Cu(NO3)2 + 2NO2 + 2H2O"),
+    _c("CaC2H4O2", "Calcium carbide + water", "ถ่านแก๊สลงน้ำ", "ฟองก๊าซอะเซทิลีนที่ใช้บ่มผลไม้และจุดตะเกียง", "#E8D9A8", "reaction", 1, equation="CaC2 + 2H2O → C2H2 + Ca(OH)2"),
 )
+# fmt: on
+
+
+def compounds_with(symbol: str) -> list[Compound]:
+    """สาร/ปฏิกิริยาที่มีธาตุนี้ (สารก่อน ปฏิกิริยาทีหลัง เรียงตามจำนวนอะตอม)"""
+    found = [c for c in COMPOUNDS if symbol in c.counts]
+    return sorted(found, key=lambda c: (c.is_reaction, c.atoms))
 
 
 # --------------------------------------------------------------------------- #
@@ -445,7 +479,8 @@ class Hint:
     @property
     def text(self) -> str:
         parts = [f"{s}{'×' + str(n) if n > 1 else ''}" for s, n in sorted(self.missing.items())]
-        return f"+{' +'.join(parts)} → {self.compound.display}"
+        target = self.compound.name if self.compound.is_reaction else self.compound.display
+        return f"+{' +'.join(parts)} → {target}"
 
 
 class Flask:
@@ -477,20 +512,29 @@ class Flask:
         return formula_text(hill_formula(self.counts))
 
     def match(self) -> tuple[Compound, int] | None:
-        """สารที่ของในขวดตรงพอดี (หรือเป็นจำนวนเท่า เช่น H×4 O×2 = 2 H₂O)"""
+        """สารที่ของในขวดตรงพอดี (หรือเป็นจำนวนเท่า เช่น H×4 O×2 = 2 H₂O)
+
+        ตรงพอดีมาก่อนเสมอ (C₆H₁₂O₆ = กลูโคส ไม่ใช่ 6 × CH₂O) แล้วจึงจำนวนเท่าที่น้อยที่สุด
+        """
         counts = self.counts
         if not counts:
             return None
+        best: tuple[Compound, int] | None = None
         for compound in COMPOUNDS:
             target = compound.counts
             if set(target) != set(counts):
                 continue
             multiples = {counts[s] / target[s] for s in target}
-            if len(multiples) == 1:
-                multiple = multiples.pop()
-                if multiple == int(multiple):
-                    return compound, int(multiple)
-        return None
+            if len(multiples) != 1:
+                continue
+            multiple = multiples.pop()
+            if multiple != int(multiple):
+                continue
+            if multiple == 1:
+                return compound, 1
+            if best is None or multiple < best[1]:
+                best = (compound, int(multiple))
+        return best
 
     def hints(self, limit: int = 3) -> list[Hint]:
         """สารที่ยังขาดอีกไม่กี่อะตอม (ของในขวดเป็นส่วนหนึ่งของสูตร) เรียงจากขาดน้อยสุด"""
