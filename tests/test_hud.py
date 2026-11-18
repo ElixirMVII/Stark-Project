@@ -458,7 +458,7 @@ def test_panels_can_be_disabled(qapp, theme):
     overlay = HudOverlay(config, FHD, theme=theme, sampler=FakeSampler())
     assert set(overlay._elements) == {
         "boot", "badge", "streak", "collapse", "radial", "charge", "knob", "launcher", "target",
-        "particles", "reticle",
+        "particles", "answer", "reticle",
     }  # fmt: skip
     overlay.start(boot=False)
     overlay.show_packet(packet(snapshot()))

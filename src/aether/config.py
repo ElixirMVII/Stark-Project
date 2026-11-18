@@ -24,6 +24,7 @@ __all__ = [
     "THEMES",
     "ActionsConfig",
     "CameraConfig",
+    "ClaudeConfig",
     "Config",
     "ConfigError",
     "GesturesConfig",
@@ -132,6 +133,27 @@ class SafetyConfig:
             0.0 <= self.auto_disarm_minutes <= 240.0,
             "safety.auto_disarm_minutes ต้องอยู่ในช่วง 0–240 (0 = ปิด)",
         )
+
+
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaudeConfig:
+    """ฟีเจอร์ที่ใช้ Claude API (ต้องต่ออินเทอร์เน็ต + มี API key) — ปิดเป็นค่าเริ่มต้น ไม่ส่งภาพจากกล้องเด็ดขาด"""
+
+    enabled: bool = False
+    model: str = "claude-opus-5-5"
+    effort: str = "low"  # ความลึกของการคิด: low (เร็ว ประหยัด) … max
+    max_tokens: int = 4096  # ความยาวคำตอบสูงสุด
+
+    def __post_init__(self) -> None:
+        _require(bool(self.model.strip()), "claude.model ต้องไม่ว่าง")
+        _require(
+            self.effort in CLAUDE_EFFORTS,
+            f"claude.effort ต้องเป็นหนึ่งใน {', '.join(CLAUDE_EFFORTS)} (ได้ {self.effort!r})",
+        )
+        _require(256 <= self.max_tokens <= 64000, "claude.max_tokens ต้องอยู่ในช่วง 256–64000")
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,6 +436,7 @@ class Config:
     poses: PosesConfig = field(default_factory=PosesConfig)
     targeting: TargetingConfig = field(default_factory=TargetingConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    claude: ClaudeConfig = field(default_factory=ClaudeConfig)
 
 
 # --------------------------------------------------------------------------- #

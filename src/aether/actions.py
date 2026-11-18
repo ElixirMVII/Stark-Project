@@ -550,6 +550,10 @@ class ActionExecutor:
             name: parse_action(spec) for name, spec in (actions or {}).items()
         }
 
+    def action_for(self, name: str):
+        """action ที่ผูกกับชื่อ event (เช่น ``"pose:rock"`` → ``"ask_claude"``) หรือ ``None``"""
+        return self._actions.get(name)
+
     @property
     def pressed(self) -> frozenset[str]:
         """ปุ่มเมาส์ที่แอปนี้กดค้างอยู่"""
@@ -634,6 +638,8 @@ class ActionExecutor:
             except Exception:  # noqa: BLE001 — แค่ใช้วาด effect: อ่านไม่ได้ก็ย่อต่อได้
                 self.last_minimized_rect = None
             self._backend.minimize_foreground()
+        elif action == "ask_claude":
+            log.debug("%s → ask_claude (แอปจัดการต่อใน UI thread)", name)
         elif isinstance(action, Hotkey):
             self._with_keys(action.keys, lambda: None)  # กดครบแล้วปล่อย = กดปุ่มลัดหนึ่งครั้ง
 

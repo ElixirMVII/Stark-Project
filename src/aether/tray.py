@@ -56,6 +56,7 @@ class Tray(QObject):
     autostart_requested = Signal(bool)  # True = เปิดพร้อม Windows
     poses_requested = Signal()
     studio_requested = Signal()
+    assistant_requested = Signal()
     reload_requested = Signal()
     quit_requested = Signal()
 
@@ -79,6 +80,8 @@ class Tray(QObject):
         self._poses_action.triggered.connect(self.poses_requested)
         self._studio_action = QAction("Studio — วาดรูป ฟิสิกส์ ดนตรี…", self._menu)
         self._studio_action.triggered.connect(self.studio_requested)
+        self._assistant_action = QAction("ผู้ช่วย Claude…", self._menu)
+        self._assistant_action.triggered.connect(self.assistant_requested)
         self._autostart_action = QAction("เปิดพร้อม Windows", self._menu)
         self._autostart_action.setCheckable(True)
         self._autostart_action.setVisible(False)  # แสดงเมื่อ set_autostart(available=True)
@@ -95,6 +98,7 @@ class Tray(QObject):
         self._menu.addAction(self._calibrate_action)
         self._menu.addAction(self._poses_action)
         self._menu.addAction(self._studio_action)
+        self._menu.addAction(self._assistant_action)
         self._menu.addAction(self._autostart_action)
         self._menu.addAction(self._reload_action)
         self._menu.addSeparator()
@@ -124,6 +128,7 @@ class Tray(QObject):
             "calibrate": self._calibrate_action,
             "poses": self._poses_action,
             "studio": self._studio_action,
+            "assistant": self._assistant_action,
             "autostart": self._autostart_action,
             "reload": self._reload_action,
             "quit": self._quit_action,

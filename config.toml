@@ -111,3 +111,12 @@ app_blocklist = []          # โปรแกรมที่ไม่ต้อ�
 
 [safety]
 auto_disarm_minutes = 10   # ARMED แต่ไม่เห็นมือนานเท่านี้ = DISARM เอง (ลืมปิดแล้วลุกไป) · 0 = ปิด
+
+[claude]
+# ฟีเจอร์ที่ใช้ Claude (AI ของ Anthropic): ถามเรื่องธาตุใน Studio, ทายภาพวาด, ผู้ช่วยตั้งค่า, วิเคราะห์ log,
+# ท่ามือ "ask_claude" — ต้องต่ออินเทอร์เน็ตและมี API key (ใส่ได้ที่ tray → "ผู้ช่วย Claude…") คิดเงินตามการใช้
+# ไม่ส่งภาพจากกล้องเด็ดขาด · ปิดไว้ = แอปไม่ต่ออินเทอร์เน็ตเลย
+enabled = false
+model = "claude-opus-5-5"
+effort = "low"             # low (เร็ว ประหยัด) | medium | high | xhigh | max (คิดลึก ช้า แพงขึ้น)
+max_tokens = 4096

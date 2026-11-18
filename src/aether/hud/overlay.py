@@ -32,6 +32,7 @@ from ..gestures import (
 )
 from ..mapping import ScreenGeometry, physical_to_logical
 from ..sound import SoundPlayer
+from .answer import AnswerCard
 from .boot import BootSequence
 from .effects import PARTICLES_PER_BURST, MinimizeCollapse, ParticlePool, SwipeStreak
 from .launcher import LauncherMenu
@@ -156,6 +157,9 @@ class HudOverlay(QWidget):
         self._elements["target"] = self._target_lock
         if self._particles is not None:
             self._elements["particles"] = self._particles
+        self._answer = AnswerCard(self._theme)  # คำตอบของ Claude (ท่ามือ ask_claude) — จอหลักเท่านั้น
+        if panels:
+            self._elements["answer"] = self._answer
         self._elements["reticle"] = self._reticle
         self._painted: dict[str, QRectF] = {}
 
@@ -369,6 +373,30 @@ class HudOverlay(QWidget):
             if text:
                 self._play("error")
 
+    # ---- การ์ดคำตอบของ Claude ------------------------------------------------ #
+
+    @property
+    def answer(self) -> AnswerCard:
+        return self._answer
+
+    def answer_begin(self, title: str) -> None:
+        self._answer.begin(title, self._clock())
+        self._refresh("answer")
+        self._play("click")
+
+    def answer_append(self, piece: str) -> None:
+        self._answer.append(piece, self._clock())
+        self._refresh("answer")
+
+    def answer_finish(self, text: str | None = None) -> None:
+        self._answer.finish(text, self._clock())
+        self._refresh("answer")
+
+    def answer_fail(self, message: str) -> None:
+        self._answer.fail(message, self._clock())
+        self._refresh("answer")
+        self._play("error")
+
     # ---- animation / repaint -------------------------------------------- #
 
     def _tick(self) -> None:
@@ -383,6 +411,7 @@ class HudOverlay(QWidget):
             ("reticle", self._reticle),
             ("streak", self._streak),
             ("collapse", self._collapse),
+            ("answer", self._answer),
             *((("particles", self._particles),) if self._particles is not None else ()),
         )
         for key, element in animated:
@@ -428,6 +457,7 @@ class HudOverlay(QWidget):
     def _layout_panels(self) -> None:
         viewport = QRectF(0.0, 0.0, float(self.width()), float(self.height()))
         self._streak.set_viewport(viewport)
+        self._answer.set_viewport(viewport)
         if self._badge is not None:
             self._badge.set_viewport(viewport)
         if self._telemetry is not None:
@@ -518,6 +548,18 @@ class HudGroup:
 
     def notify(self, text: str, sound: str | None = "click") -> None:
         self.primary.notify(text, sound)
+
+    def answer_begin(self, title: str) -> None:
+        self.primary.answer_begin(title)
+
+    def answer_append(self, piece: str) -> None:
+        self.primary.answer_append(piece)
+
+    def answer_finish(self, text: str | None = None) -> None:
+        self.primary.answer_finish(text)
+
+    def answer_fail(self, message: str) -> None:
+        self.primary.answer_fail(message)
 
     @property
     def paint_count(self) -> int:

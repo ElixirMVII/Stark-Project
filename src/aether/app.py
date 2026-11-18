@@ -30,10 +30,14 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import __version__
 from .actions import ActionExecutor, InputBackend, create_backend, double_click_time_ms
+from .assistant import prompts
+from .assistant.service import ClaudeService
+from .assistant.tasks import ClaudeBridge
 from .autostart import AutoStart
 from .calibration_wizard import CalibrationWizard
 from .camera import CameraThread, FramePacket, FrameSource
 from .config import (
+    ClaudeConfig,
     Config,
     ConfigError,
     app_root,
@@ -138,6 +142,8 @@ class AetherApp(QObject):
         self._options = options
         self._tracker = tracker
         self._packet: FramePacket | None = None
+        self._claude: ClaudeBridge | None = None
+        self._on_answer: Callable[[str, str], None] | None = None
         self._quit_on_debug_close = quit_on_debug_close
 
         # --source mouse: เมาส์จริงเป็นตัวป้อนอยู่แล้ว ห้ามส่ง input ซ้ำ → dry-run เสมอ
@@ -422,6 +428,64 @@ class AetherApp(QObject):
             return False
         return self._pipeline.toggle_armed()
 
+    # ---- Claude (ท่ามือ ask_claude) ---------------------------------------- #
+
+    def set_claude(
+        self, bridge: ClaudeBridge | None, on_answer: Callable[[str, str], None] | None = None
+    ) -> None:
+        """``on_answer(คำถาม, คำตอบ)`` = เก็บประวัติ (หน้าต่างผู้ช่วย Claude แสดงย้อนหลังได้)"""
+        self._claude = bridge
+        self._on_answer = on_answer
+
+    def ask_claude_clipboard(self, text: str | None = None) -> bool:
+        """ส่งข้อความใน clipboard ให้ Claude แล้วแสดงคำตอบบน HUD — ไม่ส่งภาพจากกล้อง
+
+        คืน ``True`` ถ้าเริ่มถามแล้ว
+        """
+        hud = self._hud
+        if self._claude is None:
+            log.info("ask_claude: ยังไม่ได้ต่อ Claude")
+            return False
+        if text is None:
+            clipboard = QGuiApplication.clipboard()
+            text = clipboard.text() if clipboard is not None else ""
+        if not text.strip():
+            if hud is not None:
+                hud.notify("Copy some text first, then ask Claude", "error")
+            return False
+        reason = self._claude.ready_reason()
+        if reason is not None or self._claude.busy:
+            message = reason or "Claude กำลังตอบคำถามก่อนหน้าอยู่ — รอสักครู่"
+            log.info("ask_claude: %s", message)
+            if hud is not None:
+                hud.answer_begin("Claude")
+                hud.answer_fail(message)
+            return False
+        system, content = prompts.gesture_question(text)
+        question = text.strip()
+
+        def done(answer: str) -> None:
+            if hud is not None:
+                hud.answer_finish(answer)
+            if self._on_answer is not None:
+                self._on_answer(question, answer)
+
+        def failed(message: str) -> None:
+            if hud is not None:
+                hud.answer_fail(message)
+
+        if hud is not None:
+            hud.answer_begin("Claude")
+        log.info("ask_claude: ถามเรื่องข้อความใน clipboard (%d ตัวอักษร)", len(question))
+        self._claude.stream(
+            system,
+            content,
+            on_text=hud.answer_append if hud is not None else None,
+            on_result=done,
+            on_error=failed,
+        )
+        return True
+
     def set_debug_visible(self, visible: bool) -> None:
         """เปิด/ปิดหน้าต่าง debug (สร้างครั้งแรกเมื่อเปิด)"""
         if visible:
@@ -597,6 +661,8 @@ class AetherApp(QObject):
                 self.armed_changed.emit(False)
             elif event.kind is EventKind.ACTION:
                 log.info("gesture action: %s", event.name)
+                if self._executor.action_for(event.name) == "ask_claude":
+                    self.ask_claude_clipboard()
             else:
                 log.debug("event: %s", event)
 
@@ -720,10 +786,15 @@ class AppController(QObject):
         samples_file: Path | None = None,
         use_tray: bool | None = None,
         autostart: AutoStart | None = None,
+        claude: ClaudeBridge | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._options = options
+        # Claude: อยู่ตลอดอายุ process (โหลด config ใหม่แค่เปลี่ยนค่า [claude]) — ปิดไว้จนผู้ใช้เปิดเอง
+        self._claude = claude
+        self.answers: list[tuple[str, str]] = []  # (คำถาม, คำตอบ) ล่าสุดจากท่ามือ/Studio
+        self._assistant = None
         self._app_factory = app_factory or _default_app_factory
         self._config_loader = config_loader or (
             lambda: load_config(options.config_path, use_calibration=not options.no_calibration)
@@ -747,6 +818,7 @@ class AppController(QObject):
             self._tray.calibrate_requested.connect(self.open_calibration)
             self._tray.poses_requested.connect(self.open_poses)
             self._tray.studio_requested.connect(self.open_studio)
+            self._tray.assistant_requested.connect(self.open_assistant)
             self._tray.reload_requested.connect(self.reload)
             self._tray.quit_requested.connect(QApplication.quit)
 
@@ -759,6 +831,15 @@ class AppController(QObject):
     @property
     def tray(self) -> Tray | None:
         return self._tray
+
+    @property
+    def claude(self) -> ClaudeBridge | None:
+        return self._claude
+
+    @property
+    def assistant(self):
+        """หน้าต่างผู้ช่วย Claude ที่เปิดอยู่ (หรือ ``None``)"""
+        return self._assistant
 
     @property
     def wizard(self) -> Wizard | None:
@@ -779,6 +860,9 @@ class AppController(QObject):
             self.open_studio()
 
     def shutdown(self) -> None:
+        if self._assistant is not None:
+            self._assistant.close()
+            self._assistant = None
         if self._wizard is not None:
             wizard, self._wizard = self._wizard, None
             wizard.finished.disconnect(self._on_wizard_finished)
@@ -831,9 +915,48 @@ class AppController(QObject):
                     self._app.config,
                     samples_path=self._samples_file,
                     audio=self._app.config.hud.sounds,
+                    claude=self._claude,
+                    on_answer=self.remember_answer,
                 )
             )
             log.info("เปิด AETHER Studio")
+
+    def open_assistant(self) -> None:
+        """หน้าต่างผู้ช่วย Claude: เปิด/ปิดฟีเจอร์, API key, ถามอิสระ, วิเคราะห์ log, ช่วยตั้งค่า"""
+        from .assistant.dialog import AssistantWindow  # import ตอนใช้: ไม่เปิดก็ไม่ต้องโหลด
+
+        if self._assistant is None:
+            if self._claude is None:
+                config = self._app.config if self._app is not None else None
+                self._claude = ClaudeBridge(
+                    ClaudeService(config.claude if config is not None else ClaudeConfig())
+                )
+                if self._app is not None:
+                    self._app.set_claude(self._claude, self.remember_answer)
+            self._assistant = AssistantWindow(
+                self._claude,
+                config_path=self.config_path(),
+                template=bundle_root() / "config.toml",
+                log_directory=log_dir(),
+                incident_directory=incident_dir(),
+                on_config_changed=self.reload,
+                history=self.answers,
+            )
+            self._assistant.destroyed.connect(self._on_assistant_closed)
+        self._assistant.show()
+        self._assistant.raise_()
+        self._assistant.activateWindow()
+        log.info("เปิดหน้าต่างผู้ช่วย Claude")
+
+    def remember_answer(self, question: str, answer: str) -> None:
+        self.answers.append((question, answer))
+        del self.answers[:-20]
+        if self._assistant is not None:
+            self._assistant.add_history(question, answer)
+
+    def config_path(self) -> Path:
+        """ไฟล์ config ที่เขียนได้ (เหมือน live tuning: ข้างตัวแอป ไม่ใช่ต้นฉบับใน bundle)"""
+        return self._options.config_path or app_root() / "config.toml"
 
     def load_poses(self, config: Config) -> PoseLibrary:
         """ท่าที่สอนไว้ใน ``poses.json`` — ไฟล์เสียจะแจ้งเตือนแล้วใช้งานต่อแบบไม่มีท่าที่สอนเอง"""
@@ -863,9 +986,17 @@ class AppController(QObject):
         self._wizard = wizard
         wizard.show()
 
+    def _on_assistant_closed(self) -> None:
+        self._assistant = None
+
     def _launch(self, config: Config, *, boot: bool) -> None:
         options = dataclasses.replace(self._options, debug=self._debug_wanted)
         app = self._app_factory(config, options, self._tray is None, self.load_poses(config))
+        if self._claude is None:
+            self._claude = ClaudeBridge(ClaudeService(config.claude))
+        else:
+            self._claude.service.update_config(config.claude)
+        app.set_claude(self._claude, self.remember_answer)
         app.armed_changed.connect(self._on_armed_changed)
         app.camera_paused_changed.connect(self._on_paused_changed)
         app.debug_visibility_changed.connect(self._on_debug_visibility)
@@ -976,6 +1107,18 @@ def _check_targeting() -> str:
     return "✓ UI Automation ใช้ได้ (Target Lock)"
 
 
+def _check_claude(config: Config | None) -> tuple[str, bool]:
+    """SDK ของ Claude โหลดได้ใน build ไหม (สร้าง client เฉยๆ ไม่ต่ออินเทอร์เน็ต ไม่ใช้ key จริง)"""
+    try:
+        import anthropic
+
+        anthropic.Anthropic(api_key="offline-check").beta.messages  # noqa: B018
+    except Exception as exc:  # noqa: BLE001 — รายงานทุกอย่างที่ทำให้ SDK ใช้ไม่ได้
+        return f"✗ Claude SDK โหลดไม่ได้: {type(exc).__name__}: {exc}", False
+    state = "เปิดอยู่" if config is not None and config.claude.enabled else "ปิดอยู่ (ค่าเริ่มต้น)"
+    return f"✓ Claude SDK {anthropic.__version__} พร้อม — ฟีเจอร์ Claude {state}", True
+
+
 def run_check(options: Options) -> int:
     """``--check``: ตรวจว่า asset ครบและโมเดลโหลดได้ (ไม่ต้องใช้กล้อง) — ใช้ตรวจ build
 
@@ -1042,6 +1185,9 @@ def run_check(options: Options) -> int:
             )
         except PoseFileError as exc:  # ไม่ทำให้ใช้งานไม่ได้: แอปทำงานต่อโดยไม่มีท่าเหล่านี้
             lines.append(f"! อ่านท่าที่สอนไว้ไม่ได้: {exc}")
+    claude_line, claude_ok = _check_claude(config)
+    lines.append(claude_line)
+    ok = ok and claude_ok
     lines.append("ผลรวม: พร้อมใช้งาน" if ok else "ผลรวม: ยังใช้งานไม่ได้")
     for line in lines:
         log.info("check: %s", line)

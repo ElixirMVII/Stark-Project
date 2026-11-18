@@ -151,13 +151,15 @@ def parse_hotkey(spec: str, *, require_modifier: bool = True) -> Hotkey:
 
 
 # action ใน [actions] ของ config ที่ไม่ใช่การกดปุ่ม
-BUILTIN_ACTIONS = ("minimize_foreground", "none")
+# "ask_claude" = ให้ Claude อธิบายข้อความที่ copy ไว้ (คำตอบขึ้นบน HUD — ต้องเปิด [claude] ไว้)
+BUILTIN_ACTIONS = ("minimize_foreground", "ask_claude", "none")
 
 
 def parse_action(spec: str) -> Hotkey | str:
     """แปลงค่าใน ``[actions]`` ของ config: ชื่อ action สำเร็จรูป หรือปุ่มลัดที่จะกดให้
 
-    - ``"minimize_foreground"`` — ย่อหน้าต่างที่ active, ``"none"`` — ไม่ทำอะไร (ปิดท่านั้น)
+    - ``"minimize_foreground"`` — ย่อหน้าต่างที่ active, ``"none"`` — ไม่ทำอะไร (ปิดท่านั้น),
+      ``"ask_claude"`` — ให้ Claude อธิบายข้อความใน clipboard (แอปเป็นคนทำ ไม่ใช่การกดปุ่ม)
     - อย่างอื่นถือเป็นปุ่มลัด เช่น ``"ctrl+win+left"``, ``"win+tab"``, ``"alt+f4"``, ``"f11"``,
       ``"media_play_pause"``, ``"volume_up"``
     """

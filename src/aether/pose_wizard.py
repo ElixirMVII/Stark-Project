@@ -55,7 +55,9 @@ ACTION_PRESETS = (
     "win+e",
     "win+shift+s",
     "f5",
+    "media_play_pause",
     "minimize_foreground",
+    "ask_claude",
 )
 
 _REASONS = {"far": "ไม่ตรงท่าไหน", "neutral": "มือปกติ", "ambiguous": "ก้ำกึ่งหลายท่า"}

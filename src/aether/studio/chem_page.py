@@ -13,21 +13,26 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QRadialGradient
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
 
+from ..assistant import prompts
+from ..assistant.schemas import Quiz, RecipeIdeas
 from ..hud.theme import hairline_stroke, with_alpha
 from .atoms import AtomInfo, atom_info
 from .chemistry import (
     CATEGORIES,
-    COMPOUNDS,
     DANGER_LEVELS,
     ELEMENTS,
     ChemLab,
     Compound,
     Element,
+    add_compounds,
+    all_compounds,
     by_symbol,
+    compound_from_idea,
     compounds_with,
 )
+from .claude_ui import StudioAnswer
 from .input import SwipeDetector
 from .pages import ACCENT, DIM, PRIMARY, StudioPage, _font
 
@@ -59,7 +64,15 @@ FILTER_LABELS = {
     "danger": "Dangerous",
     "reaction": "Reactions",
 }
+PANELS = (("element", "Element · ธาตุ"), ("guide", "Guide · คำแนะนำ"), ("claude", "Claude"))
+CLAUDE_CHIPS = (
+    ("element", "Explain element"),
+    ("flask", "Explain flask"),
+    ("recipes", "New recipes"),
+    ("quiz", "Quiz"),
+)
 GUIDE_ROW = 50.0
+IDEAS_HEADER = 52.0  # หัวรายการสูตรจาก Claude: ชื่อ + สรุป (กี่สูตร/ข้ามกี่สูตร)
 FILL_INTERVAL = 0.08  # วินาทีต่ออะตอมตอน "ลองผสม" จากคำแนะนำ
 FLASH_SECONDS = 1.0
 SHAKE_SECONDS = 0.45
@@ -79,13 +92,14 @@ def browser_pages() -> list[tuple[str, int, int, list[Element]]]:
 
 
 def guide_entries(kind: str) -> list[Compound]:
+    compounds = all_compounds()
     if kind == "all":
-        return list(COMPOUNDS)
+        return list(compounds)
     if kind == "danger":
-        return sorted((c for c in COMPOUNDS if c.danger >= 2), key=lambda c: -c.danger)
+        return sorted((c for c in compounds if c.danger >= 2), key=lambda c: -c.danger)
     if kind == "reaction":
-        return [c for c in COMPOUNDS if c.is_reaction]
-    return [c for c in COMPOUNDS if c.kind == kind]
+        return [c for c in compounds if c.is_reaction]
+    return [c for c in compounds if c.kind == kind]
 
 
 Zone = tuple[QRectF, Callable[[], None]]
@@ -95,7 +109,7 @@ class ChemistryPage(StudioPage):
     title = "Elements"
     hint = (
         "Pinch an element and drop it in the flask  ·  open palm + flick left/right = next/previous page  ·  "
-        "Guide tab: pinch a recipe to try it  ·  hold ✌ remove · ✊ empty · 👍 table"
+        "Guide tab: pinch a recipe to try it  ·  Claude tab: ask about it  ·  hold ✌ remove · ✊ empty · 👍 table"
     )
 
     def __init__(self, parent=None, *, clock: Callable[[], float] = time.perf_counter) -> None:
@@ -117,6 +131,16 @@ class ChemistryPage(StudioPage):
         self._flash: tuple[float, Compound] | None = None
         self._shake_until = 0.0
         self._page_anim: tuple[float, int] | None = None
+        # แท็บ Claude (ตั้ง self.claude จาก StudioWindow) — ส่งเฉพาะข้อมูลธาตุ/ของในขวด
+        self.claude = None
+        self.on_answer: Callable[[str, str], None] | None = None
+        self.answer = StudioAnswer(clock)
+        self.claude_view = "answer"  # "answer" | "ideas" | "quiz"
+        self.ideas: list[Compound] = []
+        self.quiz: Quiz | None = None
+        self.quiz_index = 0
+        self.quiz_choice: int | None = None
+        self.quiz_score = 0
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # ---- layout ------------------------------------------------------------ #
@@ -278,6 +302,237 @@ class ChemistryPage(StudioPage):
             for event in self.lab.check():
                 self._on_match(event.compound, event.multiple)
 
+    # ---- Claude ------------------------------------------------------------- #
+
+    def element_facts(self) -> dict[str, object]:
+        info = atom_info(self.focus)
+        element = self.focus
+        return {
+            "symbol": element.symbol,
+            "name": element.name,
+            "thai": element.thai,
+            "number": element.number,
+            "mass": element.mass_text,
+            "category": CATEGORIES[element.category][0],
+            "period": element.period,
+            "group": element.group,
+            "configuration": info.configuration,
+            "state": info.state,
+        }
+
+    def _flask_context(self) -> tuple[dict[str, int], str, str | None]:
+        flask = self.lab.flask
+        match = flask.match()
+        name = None
+        if match is not None:
+            compound, multiple = match
+            name = f"{multiple} × {compound.name}" if multiple > 1 else compound.name
+        return dict(flask.counts), flask.formula(), name
+
+    def _can_ask(self) -> bool:
+        if self.claude is None:
+            self.toast("Claude is not available")
+            return False
+        if self.answer.busy:
+            self.toast("Claude is still answering")
+            return False
+        return True
+
+    def ask(self, question: str | None = None) -> bool:
+        """คำถามอิสระ: ถ้ามีของในขวด ถามเรื่องของในขวด ไม่งั้นถามเรื่องธาตุที่เลือกอยู่"""
+        if self.lab.flask.atoms:
+            return self.ask_flask(question)
+        return self.ask_element(question)
+
+    def ask_element(self, question: str | None = None) -> bool:
+        if not self._can_ask():
+            return False
+        system, content = prompts.element_request(self.element_facts(), question)
+        label = question or f"Explain {self.focus.name}"
+        return self._stream(
+            f"Claude · {self.focus.symbol} {self.focus.name}", system, content, label
+        )
+
+    def ask_flask(self, question: str | None = None) -> bool:
+        if not self.lab.flask.atoms:
+            self.toast("Put some atoms in the flask first")
+            return False
+        if not self._can_ask():
+            return False
+        counts, formula, match = self._flask_context()
+        system, content = prompts.flask_request(counts, formula, match, question)
+        label = question or f"Explain flask {formula}"
+        return self._stream(f"Claude · flask {formula}", system, content, label)
+
+    def suggest_recipes(self) -> bool:
+        if not self._can_ask():
+            return False
+        known = [c.formula for c in all_compounds()]
+        system, content = prompts.recipe_request(known, self.focus.symbol)
+        self.set_panel("claude")
+        self.claude_view = "answer"
+        self.answer.begin(f"Claude · new recipes with {self.focus.symbol}")
+        self.claude.parse(
+            system, content, RecipeIdeas, on_result=self.show_ideas, on_error=self._failed
+        )
+        self.update()
+        return True
+
+    def show_ideas(self, ideas: RecipeIdeas) -> list[Compound]:
+        """ตรวจสูตรทีละตัว (อ่านได้ ≤ 24 อะตอม ไม่ซ้ำของเดิม) แล้วเพิ่มเข้าแคตตาล็อก — คืนตัวที่ใช้ได้"""
+        made = []
+        for idea in ideas.ideas:
+            compound = compound_from_idea(
+                idea.formula, idea.name, idea.thai, idea.fact, idea.kind, idea.danger
+            )
+            if compound is not None:
+                made.append(compound)
+        added = add_compounds(made)
+        self.ideas = added
+        skipped = len(ideas.ideas) - len(added)
+        if added:
+            self.claude_view = "ideas"
+            self.answer.finish(
+                f"{len(added)} new · pinch one to mix it"
+                + (f" · {skipped} skipped (invalid or known)" if skipped else "")
+            )
+            if self.on_answer is not None:
+                lines = "\n".join(f"{c.formula} — {c.name} / {c.thai}: {c.fact}" for c in added)
+                self.on_answer(f"[Elements] new recipes with {self.focus.symbol}", lines)
+        else:
+            self.claude_view = "answer"
+            self.answer.finish(
+                "Claude's ideas were all invalid or already in the guide — try again"
+            )
+        self.update()
+        return added
+
+    def start_quiz(self) -> bool:
+        if not self._can_ask():
+            return False
+        system, content = prompts.quiz_request(f"{self.focus.name} ({self.focus.symbol})")
+        self.set_panel("claude")
+        self.claude_view = "answer"
+        self.answer.begin(f"Claude · quiz on {self.focus.name}")
+        self.claude.parse(system, content, Quiz, on_result=self.show_quiz, on_error=self._failed)
+        self.update()
+        return True
+
+    def show_quiz(self, quiz: Quiz) -> bool:
+        questions = [
+            q for q in quiz.questions if 2 <= len(q.choices) <= 5 and 0 <= q.answer < len(q.choices)
+        ]
+        if not questions:
+            self.answer.fail("The quiz came back unreadable — try again")
+            self.update()
+            return False
+        self.quiz = Quiz(questions=questions)
+        self.quiz_index, self.quiz_choice, self.quiz_score = 0, None, 0
+        self.claude_view = "quiz"
+        self.answer.finish("")
+        self.update()
+        return True
+
+    def choose(self, index: int) -> None:
+        if self.quiz is None or self.quiz_choice is not None:
+            return
+        question = self.quiz.questions[self.quiz_index]
+        self.quiz_choice = index
+        if index == question.answer:
+            self.quiz_score += 1
+            self.toast("Correct!")
+        else:
+            self.toast("Not quite")
+        self.update()
+
+    def next_question(self) -> None:
+        if self.quiz is None:
+            return
+        if self.quiz_index + 1 < len(self.quiz.questions):
+            self.quiz_index += 1
+            self.quiz_choice = None
+        else:
+            total = len(self.quiz.questions)
+            self.claude_view = "answer"
+            self.answer.begin("Claude · quiz")
+            self.answer.finish(f"Score {self.quiz_score}/{total}")
+            self.quiz = None
+        self.update()
+
+    def _stream(self, title: str, system: str, content, label: str) -> bool:
+        self.set_panel("claude")
+        self.claude_view = "answer"
+        self.answer.begin(title)
+
+        def piece(text: str) -> None:
+            self.answer.append(text)
+
+        def done(text: str) -> None:
+            self.answer.finish(text)
+            if self.on_answer is not None:
+                self.on_answer(f"[Elements] {label}", text)
+
+        self.claude.stream(system, content, on_text=piece, on_result=done, on_error=self._failed)
+        self.update()
+        return True
+
+    def _failed(self, message: str) -> None:
+        self.claude_view = "answer"
+        if not self.answer.visible:
+            self.answer.begin("Claude")
+        self.answer.fail(message)
+        self.update()
+
+    def _chip_rects(self, panel: QRectF) -> list[tuple[QRectF, str, str]]:
+        rects, x = [], panel.left()
+        for key, label in CLAUDE_CHIPS:
+            width = len(label) * 7.2 + 24
+            rects.append((QRectF(x, panel.top(), width, 26), key, label))
+            x += width + 6
+        return rects
+
+    def _claude_rows(self, panel: QRectF) -> list[tuple[QRectF, Callable[[], None]]]:
+        area = panel.adjusted(0, 36 + IDEAS_HEADER, 0, 0)
+        rows: list[tuple[QRectF, Callable[[], None]]] = []
+        if self.claude_view == "ideas":
+            for index, compound in enumerate(self.ideas):
+                rect = QRectF(
+                    area.left(), area.top() + index * GUIDE_ROW, area.width(), GUIDE_ROW - 4
+                )
+                if rect.bottom() > panel.bottom():
+                    break
+                rows.append((rect, lambda c=compound: self.try_recipe(c)))
+        elif self.claude_view == "quiz" and self.quiz is not None:
+            question = self.quiz.questions[self.quiz_index]
+            top = panel.top() + 36 + self._question_height(panel, question.question)
+            for index, _choice in enumerate(question.choices):
+                rect = QRectF(panel.left(), top + index * 38, panel.width(), 34)
+                rows.append((rect, lambda i=index: self.choose(i)))
+            if self.quiz_choice is not None:
+                rect = QRectF(panel.right() - 90, panel.bottom() - 28, 90, 26)
+                rows.append((rect, self.next_question))
+        return rows
+
+    def _question_height(self, panel: QRectF, text: str) -> float:
+        from PySide6.QtGui import QFontMetricsF
+
+        metrics = QFontMetricsF(_font(13, 600))
+        flags = int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap)
+        return metrics.boundingRect(QRectF(0, 0, panel.width(), 1000), flags, text).height() + 10
+
+    def _claude_zones(self, panel: QRectF) -> list[Zone]:
+        actions = {
+            "element": self.ask_element,
+            "flask": self.ask_flask,
+            "recipes": self.suggest_recipes,
+            "quiz": self.start_quiz,
+        }
+        zones: list[Zone] = [
+            (rect, lambda key=key: actions[key]()) for rect, key, _ in self._chip_rects(panel)
+        ]
+        zones.extend(self._claude_rows(panel))
+        return zones
+
     # ---- input --------------------------------------------------------------- #
 
     def on_hands(self, now: float) -> None:
@@ -375,16 +630,12 @@ class ChemistryPage(StudioPage):
         header = QRectF(left.left(), left.top(), left.width(), HEADER)
         zones.append((QRectF(header.right() - 70, header.top(), 32, HEADER), self.previous_page))
         zones.append((QRectF(header.right() - 34, header.top(), 32, HEADER), self.next_page))
-        right = self.right_rect()
-        half = right.width() / 2
-        zones.append(
-            (QRectF(right.left(), right.top(), half, TABS), lambda: self.set_panel("element"))
-        )
-        zones.append(
-            (QRectF(right.left() + half, right.top(), half, TABS), lambda: self.set_panel("guide"))
-        )
+        for rect, key in self._tab_rects():
+            zones.append((rect, lambda key=key: self.set_panel(key)))
         panel = self.panel_rect()
-        if self.panel == "guide":
+        if self.panel == "claude":
+            zones.extend(self._claude_zones(panel))
+        elif self.panel == "guide":
             for rect, kind in self._filter_rects(panel):
                 zones.append((rect, lambda kind=kind: self.set_filter(kind)))
             rows, _, _, area = self.guide_rows()
@@ -441,6 +692,8 @@ class ChemistryPage(StudioPage):
         self._paint_tabs(painter)
         if self.panel == "guide":
             self._paint_guide(painter)
+        elif self.panel == "claude":
+            self._paint_claude(painter)
         else:
             self._paint_element(painter, now)
         self._paint_flask(painter, now)
@@ -566,12 +819,20 @@ class ChemistryPage(StudioPage):
             sub_box = QRectF(rect.left(), rect.bottom() - 26, rect.width(), 18)
             painter.drawText(sub_box, Qt.AlignmentFlag.AlignCenter, element.thai or info.state_thai)
 
+    def _tab_rects(self) -> list[tuple[QRectF, str]]:
+        right = self.right_rect()
+        widths = (0.36, 0.40, 0.24)
+        rects, x = [], right.left()
+        for (key, _label), share in zip(PANELS, widths, strict=True):
+            rects.append((QRectF(x, right.top(), right.width() * share, TABS), key))
+            x += right.width() * share
+        return rects
+
     def _paint_tabs(self, painter: QPainter) -> None:
         right = self.right_rect()
-        half = right.width() / 2
-        tabs = (("element", "Element · ธาตุ"), ("guide", "Guide · คำแนะนำการผสม"))
-        for index, (key, label) in enumerate(tabs):
-            rect = QRectF(right.left() + index * half, right.top(), half, TABS)
+        labels = dict(PANELS)
+        for rect, key in self._tab_rects():
+            label = labels[key]
             active = self.panel == key
             painter.setPen(PRIMARY if active else DIM)
             painter.setFont(_font(13, 600 if active else 500))
@@ -648,6 +909,133 @@ class ChemistryPage(StudioPage):
         line(f"{info.state_thai} · {info.block}-block · valence {valence}", 12, 400, DIM, 20)
         group = f" · group {element.group}" if element.group else ""
         line(f"period {element.period}{group}", 12, 400, DIM, 20)
+
+    # ---- แท็บ Claude ------------------------------------------------------------ #
+
+    def _paint_claude(self, painter: QPainter) -> None:
+        panel = self.panel_rect()
+        painter.setFont(_font(12, 500))
+        for rect, _key, label in self._chip_rects(panel):
+            painter.setPen(QPen(QColor(255, 255, 255, 40), 1.0))
+            painter.setBrush(QColor(255, 255, 255, 8))
+            painter.drawRoundedRect(rect, 13, 13)
+            painter.setPen(PRIMARY)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
+        body = panel.adjusted(0, 36, 0, 0)
+        left_v = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        wrap = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap
+        if self.claude is None or self.claude.ready_reason() is not None:
+            reason = (
+                self.claude.ready_reason()
+                if self.claude is not None
+                else "Claude is not connected in this window"
+            )
+            if not self.answer.visible:
+                painter.setFont(_font(12, 400))
+                painter.setPen(DIM)
+                painter.drawText(body, wrap, reason or "")
+                return
+        if self.claude_view == "quiz" and self.quiz is not None:
+            question = self.quiz.questions[self.quiz_index]
+            painter.setFont(_font(13, 600))
+            painter.setPen(PRIMARY)
+            painter.drawText(
+                QRectF(body.left(), body.top(), body.width(), 1000), wrap, question.question
+            )
+            for index, (rect, _action) in enumerate(
+                self._claude_rows(panel)[: len(question.choices)]
+            ):
+                chosen = self.quiz_choice is not None
+                correct = index == question.answer
+                if chosen and correct:
+                    color = QColor(DANGER_LEVELS[0][2])
+                elif chosen and index == self.quiz_choice:
+                    color = QColor(DANGER_LEVELS[2][2])
+                else:
+                    color = QColor(255, 255, 255, 60)
+                painter.setPen(QPen(color, 1.0))
+                painter.setBrush(
+                    with_alpha(color, 0.12)
+                    if chosen and (correct or index == self.quiz_choice)
+                    else QColor(255, 255, 255, 7)
+                )
+                painter.drawRoundedRect(rect, 8, 8)
+                painter.setFont(_font(12, 500))
+                painter.setPen(PRIMARY)
+                painter.drawText(
+                    rect.adjusted(12, 0, -12, 0),
+                    left_v,
+                    f"{'ABCDE'[index]}.  {question.choices[index]}",
+                )
+            if self.quiz_choice is not None:
+                last = self._claude_rows(panel)[len(question.choices) - 1][0]
+                explain = QRectF(
+                    panel.left(),
+                    last.bottom() + 8,
+                    panel.width(),
+                    panel.bottom() - last.bottom() - 40,
+                )
+                painter.setFont(_font(12, 400))
+                painter.setPen(with_alpha(PRIMARY, 0.85))
+                painter.drawText(explain, wrap, question.explanation)
+                next_rect = QRectF(panel.right() - 90, panel.bottom() - 28, 90, 26)
+                painter.setPen(QPen(ACCENT, 1.0))
+                painter.setBrush(with_alpha(ACCENT, 0.16))
+                painter.drawRoundedRect(next_rect, 13, 13)
+                painter.setPen(ACCENT)
+                painter.drawText(next_rect, Qt.AlignmentFlag.AlignCenter, "Next ›")
+            painter.setFont(_font(11, 500, tabular=True))
+            painter.setPen(DIM)
+            painter.drawText(
+                QRectF(panel.left(), panel.bottom() - 28, 160, 26),
+                left_v,
+                f"Question {self.quiz_index + 1}/{len(self.quiz.questions)} · score {self.quiz_score}",
+            )
+            return
+        if self.claude_view == "ideas":
+            self.answer.paint(
+                painter, QRectF(body.left(), body.top(), body.width(), IDEAS_HEADER - 4), card=False
+            )
+            for rect, compound in zip(
+                (r for r, _ in self._claude_rows(panel)), self.ideas, strict=False
+            ):
+                level = QColor(DANGER_LEVELS[compound.danger][2])
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 255, 7))
+                painter.drawRoundedRect(rect, 8, 8)
+                painter.setBrush(level)
+                painter.drawRoundedRect(
+                    QRectF(rect.left(), rect.top() + 8, 3, rect.height() - 16), 1.5, 1.5
+                )
+                painter.setFont(_font(12, 600))
+                painter.setPen(PRIMARY)
+                title = f"{compound.display}  {compound.name}"
+                width = int(rect.width() - 20)
+                elided = painter.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, width)
+                painter.drawText(
+                    QRectF(rect.left() + 12, rect.top() + 4, width, 20), left_v, elided
+                )
+                painter.setFont(_font(11, 400))
+                painter.setPen(DIM)
+                detail = f"{compound.thai} — {compound.fact}"
+                elided = painter.fontMetrics().elidedText(
+                    detail, Qt.TextElideMode.ElideRight, width
+                )
+                painter.drawText(
+                    QRectF(rect.left() + 12, rect.top() + 24, width, 18), left_v, elided
+                )
+            return
+        if self.answer.visible:
+            self.answer.paint(painter, body, card=False)
+        else:
+            painter.setFont(_font(12, 400))
+            painter.setPen(DIM)
+            painter.drawText(
+                body,
+                wrap,
+                f"Ask Claude about {self.focus.name} or what is in the flask, get new recipes to "
+                "try, or take a quick quiz. Pinch a button above — or type a question below.",
+            )
 
     # ---- แท็บ Guide ------------------------------------------------------------- #
 
@@ -945,7 +1333,7 @@ def chemistry_controls(page: ChemistryPage) -> QWidget:
         ("‹ Previous", page.previous_page),
         ("Next ›", page.next_page),
         ("Periodic table", page.toggle_table),
-        ("Guide", lambda: page.set_panel("guide" if page.panel == "element" else "element")),
+        ("Guide", lambda: page.set_panel("guide" if page.panel != "guide" else "element")),
         ("Remove last atom", page.undo),
         ("Empty flask", page.empty),
     )
@@ -954,4 +1342,19 @@ def chemistry_controls(page: ChemistryPage) -> QWidget:
         button.clicked.connect(lambda _=False, s=slot: s())
         layout.addWidget(button)
     layout.addStretch(1)
+    question = QLineEdit()
+    question.setPlaceholderText("Ask Claude about this element / the flask")
+    question.setMinimumWidth(220)
+    ask = QPushButton("Ask Claude")
+
+    def send() -> None:
+        if page.ask(question.text().strip() or None):
+            question.clear()
+
+    ask.clicked.connect(send)
+    question.returnPressed.connect(send)
+    layout.addWidget(question)
+    layout.addWidget(ask)
+    bar.claude_question = question  # type: ignore[attr-defined]
+    bar.claude_button = ask  # type: ignore[attr-defined]
     return bar

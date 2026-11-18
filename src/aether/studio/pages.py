@@ -37,8 +37,10 @@ from PySide6.QtWidgets import (
 )
 
 from .. import ui_style
+from ..assistant import prompts
 from ..hud.theme import arc_path, hairline_stroke, sans_family, with_alpha
 from ..tracker import Hand, HandFrame, hand_connections
+from .claude_ui import StudioAnswer, png_bytes
 from .draw import PALETTE, SWATCH_RADIUS, DrawController, Drawing, swatch_centers
 from .input import StudioHand, mouse_hand
 from .lab import FINGER_NAMES, HandMetrics, SampleRecorder, hand_metrics
@@ -266,6 +268,11 @@ class DrawPage(StudioPage):
         self.controller = DrawController(self.drawing)
         self.save_dir = save_dir or default_save_dir()
         self.last_saved: Path | None = None
+        # Claude ทายภาพ/ติชม: ส่งเฉพาะภาพที่วาด (ไม่ใช่ภาพจากกล้อง) — ตั้งโดย StudioWindow
+        self.claude = None
+        self.on_answer: Callable[[str, str], None] | None = None
+        self.answer = StudioAnswer(clock)
+        self._answer_strokes = 0
 
     def resizeEvent(self, event) -> None:
         self.controller.aspect = self.width() / max(self.height(), 1)
@@ -277,6 +284,55 @@ class DrawPage(StudioPage):
                 self.save_png()
             else:
                 self.toast(event.text)
+        # เริ่มวาดเส้นใหม่หลังอ่านคำตอบแล้ว = ปิดการ์ดคำตอบ
+        if not self.answer.busy and len(self.drawing.strokes) > self._answer_strokes:
+            self.answer.dismiss()
+
+    # ---- Claude --------------------------------------------------------- #
+
+    def ask_claude(self, question: str | None = None) -> bool:
+        """ส่งภาพที่วาด (PNG กว้าง 768 px) ให้ Claude ทายและติชม — คำตอบขึ้นเป็นการ์ดมุมขวาบน"""
+        if not self.drawing.strokes:
+            self.toast("Draw something first")
+            return False
+        if self.claude is None:
+            self.toast("Claude is not available")
+            return False
+        if self.answer.busy:
+            self.toast("Claude is still answering")
+            return False
+        system, content = prompts.drawing_request(png_bytes(self.image(768)), question)
+        asked = question.strip() if question else "ทายภาพที่วาด"
+        self.answer.begin("Claude · your drawing")
+        self._answer_strokes = len(self.drawing.strokes)
+
+        def done(text: str) -> None:
+            self.answer.finish(text)
+            if self.on_answer is not None:
+                self.on_answer(f"[Draw] {asked}", text)
+            self.update()
+
+        def failed(message: str) -> None:
+            self.answer.fail(message)
+            self.update()
+
+        def piece(text: str) -> None:
+            self.answer.append(text)
+            self.update()
+
+        self.claude.stream(system, content, on_text=piece, on_result=done, on_error=failed)
+        self.update()
+        return True
+
+    def answer_rect(self) -> QRectF:
+        width = min(420.0, max(260.0, self.width() * 0.42))
+        height = min(self.height() * 0.6, self.answer.height_for(width))
+        return QRectF(self.width() - width - 16, 16, width, height)
+
+    def tick(self, now: float) -> None:
+        super().tick(now)
+        if self.answer.busy:
+            self.update()
 
     def undo(self) -> None:
         if self.drawing.undo():
@@ -285,6 +341,8 @@ class DrawPage(StudioPage):
 
     def clear(self) -> None:
         self.drawing.clear()
+        self.answer.dismiss()
+        self._answer_strokes = 0
         self.toast("Cleared")
         self.update()
 
@@ -326,6 +384,7 @@ class DrawPage(StudioPage):
         render_drawing(painter, self.drawing, self.width(), self.height())
         self._paint_swatches(painter)
         self.paint_empty_hint(painter, "Show your hand to the camera — or draw with the mouse")
+        self.answer.paint(painter, self.answer_rect())
         self.paint_cursors(painter, self.controller.hold_progress)
         self.paint_toast(painter)
         painter.end()
@@ -795,6 +854,21 @@ def draw_controls(page: DrawPage) -> QWidget:
         button.clicked.connect(lambda _=False, s=slot: s())
         layout.addWidget(button)
     layout.addStretch(1)
+    question = QLineEdit()
+    question.setPlaceholderText("Ask Claude about the drawing (optional)")
+    question.setMinimumWidth(220)
+    ask = QPushButton("Ask Claude")
+
+    def send() -> None:
+        if page.ask_claude(question.text() or None):
+            question.clear()
+
+    ask.clicked.connect(send)
+    question.returnPressed.connect(send)
+    layout.addWidget(question)
+    layout.addWidget(ask)
+    bar.claude_question = question  # type: ignore[attr-defined]
+    bar.claude_button = ask  # type: ignore[attr-defined]
     return bar
 
 

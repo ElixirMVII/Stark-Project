@@ -56,8 +56,11 @@ class StudioWindow(QWidget):
         save_dir: Path | None = None,
         audio: bool = True,
         clock: Callable[[], float] = time.perf_counter,
+        claude=None,
+        on_answer: Callable[[str, str], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """``claude`` = :class:`aether.assistant.tasks.ClaudeBridge` (หน้า Draw/Elements ใช้ถาม Claude)"""
         super().__init__(parent)
         self.setWindowTitle("AETHER Studio")
         self.setMinimumSize(900, 600)
@@ -75,6 +78,9 @@ class StudioWindow(QWidget):
         self.theremin = ThereminPage(clock=clock, audio=audio)
         self.lab = LabPage(clock=clock, samples_path=samples_path)
         self.elements = ChemistryPage(clock=clock)
+        for page in (self.draw, self.elements):
+            page.claude = claude
+            page.on_answer = on_answer
         self.pages: list[StudioPage] = [
             self.draw,
             self.sandbox,

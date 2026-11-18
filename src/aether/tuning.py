@@ -24,6 +24,7 @@ __all__ = [
     "apply_overrides",
     "current_values",
     "save_overrides",
+    "set_toml_literal",
     "set_toml_value",
 ]
 
@@ -128,10 +129,17 @@ def set_toml_value(text: str, key: str, value: float, *, integer: bool = False) 
       ``one_euro = { min_cutoff = 1.0, beta = 0.02 }``
     - ถ้ายังไม่มี: เพิ่มบรรทัดท้าย table นั้น (หรือสร้าง table ใหม่ท้ายไฟล์)
     """
+    return set_toml_literal(text, key, _format(value, integer))
+
+
+_VALUE = r"(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|\[[^\]]*\]|[^\s#,]+)"  # สตริง / อาร์เรย์บรรทัดเดียว / ค่าอื่น
+
+
+def set_toml_literal(text: str, key: str, rendered: str) -> str:
+    """เหมือน :func:`set_toml_value` แต่รับค่าที่เขียนเป็น TOML แล้ว (``'"win+d"'``, ``"true"``, ``"0.3"``)"""
     parts = key.split(".")
     section, name = parts[0], parts[1]
     inner = parts[2] if len(parts) > 2 else None
-    rendered = _format(value, integer)
     lines = text.splitlines()
     start = end = None
     for i, line in enumerate(lines):
@@ -153,7 +161,7 @@ def set_toml_value(text: str, key: str, value: float, *, integer: bool = False) 
                 continue
             prefix, rest = match.groups()
             if inner is None:
-                lines[i] = prefix + re.sub(r"^[^\s#,]+", rendered, rest, count=1)
+                lines[i] = prefix + re.sub(rf"^{_VALUE}", lambda _m: rendered, rest, count=1)
                 return "\n".join(lines) + "\n"
             inline = re.compile(rf"(\b{re.escape(inner)}\s*=\s*)([^,}}\s]+)")
             if inline.search(rest):

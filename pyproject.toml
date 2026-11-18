@@ -18,6 +18,8 @@ dependencies = [
     "psutil>=5.9",
     # Target Lock (v1.1 M6): Windows UI Automation — spec v1.1 อนุญาตไว้แล้ว (ดึง comtypes มาด้วย)
     "uiautomation>=2.0.20; sys_platform == 'win32'",
+    # ฟีเจอร์ Claude (ปิดเป็นค่าเริ่มต้น — ผู้ใช้อนุมัติให้เพิ่ม, ดู docs/DECISIONS.md D55)
+    "anthropic>=2.10,<3",
 ]
 
 [project.optional-dependencies]

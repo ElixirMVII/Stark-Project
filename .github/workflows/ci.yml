@@ -107,6 +107,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "aether.exe --check exited with $($p.ExitCode)" }
           if (-not (Select-String -Path $log -Pattern 'check result: OK' -Quiet)) { throw 'check result missing' }
           if (-not (Select-String -Path $log -Pattern 'UI Automation' -Quiet)) { throw 'Target Lock (UI Automation) unavailable in the build' }
+          if (-not (Select-String -Path $log -Pattern 'Claude SDK .* พร้อม' -Quiet)) { throw 'Claude SDK unavailable in the build' }
 
       - name: Smoke run (start, then quit with Ctrl+Alt+Q)
         shell: pwsh

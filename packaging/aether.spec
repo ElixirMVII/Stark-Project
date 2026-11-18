@@ -58,7 +58,8 @@ a = Analysis(  # noqa: F821
     pathex=[str(ROOT / "src")],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["mediapipe.tasks.c", *pynput_backends],
+    # anthropic: import ตอนใช้งานใน aether.assistant.service (ฟีเจอร์ Claude) — ระบุไว้ให้ชัด
+    hiddenimports=["mediapipe.tasks.c", *pynput_backends, "anthropic", "httpx2", "jiter"],
     excludes=[
         "tkinter",
         "PySide6.QtWebEngineCore",

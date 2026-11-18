@@ -29,7 +29,11 @@ __all__ = [
     "Compound",
     "Element",
     "Flask",
+    "add_compounds",
+    "all_compounds",
     "by_symbol",
+    "clear_extra_compounds",
+    "compound_from_idea",
     "compounds_with",
     "formula_text",
     "hill_formula",
@@ -320,6 +324,7 @@ class Compound:
     danger: int = 0  # 0–3 ดู DANGER_LEVELS
     energetic: bool = False  # ปล่อยพลังงานมาก (วงวาบสีขาว)
     equation: str = ""  # ปฏิกิริยา: สมการที่แสดง เช่น "2Na + 2H2O → 2NaOH + H2"
+    by_claude: bool = False  # สูตรที่ Claude แนะนำระหว่างใช้งาน (ตรวจแล้ว ไม่ได้บันทึกลงดิสก์)
 
     @property
     def counts(self) -> Counter[str]:
@@ -460,9 +465,61 @@ COMPOUNDS: tuple[Compound, ...] = (
 # fmt: on
 
 
+# สูตรที่ Claude แนะนำ (หน้า Elements → Claude → New recipes) — อยู่ในหน่วยความจำจนปิดแอป
+_EXTRA: list[Compound] = []
+_IDEA_KINDS = ("everyday", "fun", "toxic", "corrosive", "explosive")
+
+
+def all_compounds() -> tuple[Compound, ...]:
+    """สารในตัวแอป + สารที่ Claude แนะนำ (ขวดผสมจำได้ทั้งหมด)"""
+    return COMPOUNDS + tuple(_EXTRA)
+
+
+def compound_from_idea(
+    formula: str, name: str, thai: str, fact: str, kind: str, danger: int
+) -> Compound | None:
+    """แปลงสูตรที่ Claude แนะนำเป็น :class:`Compound` — ``None`` ถ้าใช้ไม่ได้ (สูตรผิด/อะตอมเกิน/ซ้ำของเดิม)"""
+    formula = formula.strip()
+    try:
+        counts = parse_formula(formula)
+    except ValueError:
+        return None
+    total = sum(counts.values())
+    if not counts or total < 2 or total > MAX_ATOMS:
+        return None
+    if any(c.counts == counts for c in all_compounds()):
+        return None
+    heaviest = max(counts, key=lambda symbol: by_symbol(symbol).number)
+    return Compound(
+        formula,
+        name.strip()[:60] or formula,
+        thai.strip()[:60],
+        fact.strip()[:200],
+        by_symbol(heaviest).color,
+        kind if kind in _IDEA_KINDS else "everyday",
+        min(max(int(danger), 0), len(DANGER_LEVELS) - 1),
+        by_claude=True,
+    )
+
+
+def add_compounds(compounds: list[Compound]) -> list[Compound]:
+    """เพิ่มเข้าแคตตาล็อก (ข้ามตัวที่อะตอมซ้ำของเดิม) คืนตัวที่เพิ่มจริง"""
+    added = []
+    for compound in compounds:
+        if any(c.counts == compound.counts for c in all_compounds()):
+            continue
+        _EXTRA.append(compound)
+        added.append(compound)
+    return added
+
+
+def clear_extra_compounds() -> None:
+    _EXTRA.clear()
+
+
 def compounds_with(symbol: str) -> list[Compound]:
     """สาร/ปฏิกิริยาที่มีธาตุนี้ (สารก่อน ปฏิกิริยาทีหลัง เรียงตามจำนวนอะตอม)"""
-    found = [c for c in COMPOUNDS if symbol in c.counts]
+    found = [c for c in all_compounds() if symbol in c.counts]
     return sorted(found, key=lambda c: (c.is_reaction, c.atoms))
 
 
@@ -520,7 +577,7 @@ class Flask:
         if not counts:
             return None
         best: tuple[Compound, int] | None = None
-        for compound in COMPOUNDS:
+        for compound in all_compounds():
             target = compound.counts
             if set(target) != set(counts):
                 continue
@@ -542,7 +599,7 @@ class Flask:
         if not counts:
             return []
         hints = []
-        for compound in COMPOUNDS:
+        for compound in all_compounds():
             target = compound.counts
             if all(counts[s] <= target.get(s, 0) for s in counts) and counts != target:
                 hints.append(Hint(compound, target - counts))
