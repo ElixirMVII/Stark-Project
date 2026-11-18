@@ -30,6 +30,22 @@ def load_tool(name: str):
 
 @pytest.fixture(scope="session")
 def qapp():
+    """QApplication เดียวทั้ง session — ตอนจบลบ widget ที่ test สร้างทิ้งไว้ก่อน Python ปิดตัว
+
+    ถ้าปล่อยให้ Python เก็บกวาดเองตอนปิด process ลำดับการทำลาย object ของ Qt ไม่แน่นอน
+    (widget อาจถูกทำลายหลัง QApplication) ทำให้ segfault ตอนจบเป็นบางครั้ง ทั้งที่ test ผ่านหมด
+    """
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QApplication
 
-    return QApplication.instance() or QApplication(["aether-tests"])
+    app = QApplication.instance() or QApplication(["aether-tests"])
+    yield app
+    for widget in QApplication.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
+        gc.collect()
