@@ -304,8 +304,13 @@ def test_menu_shows_only_in_launcher_state_and_highlights_selection(theme):
         if not rect.contains(x, y)
     )
     assert outside == 0
-    right, left = image.pixelColor(180 + 100, 180), image.pixelColor(180 - 100, 180)
-    assert right.red() > left.red()  # ช่องขวา (เลือกอยู่) เป็นสีเน้น
+    # ใกล้ขอบในของช่อง (ห่างจากป้าย ไม่ขึ้นกับฟอนต์ของเครื่อง): ช่องขวาที่เลือกอยู่อมสีเน้น (อุ่นกว่า)
+    right, left = image.pixelColor(180 + 58, 180), image.pixelColor(180 - 58, 180)
+
+    def warmth(color):
+        return color.red() - color.blue()
+
+    assert warmth(right) > warmth(left) + 10
     assert image.pixelColor(180, 180).alpha() == 0  # กลางวงโปร่ง (เห็น reticle)
 
     menu.set_state(center, snapshot(State.POINTER))
