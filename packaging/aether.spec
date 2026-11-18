@@ -35,6 +35,7 @@ datas = [
     *_assets("fonts/*.ttf", "assets/fonts"),
     *_assets("fonts/OFL-*.txt", "assets/fonts"),  # SIL OFL: ต้องแนบ license ไปกับฟอนต์
     *_assets("sounds/*.wav", "assets/sounds"),  # ไม่บังคับ — ไม่มีเสียงแอปก็ทำงานได้
+    *_assets("poses/*.json", "assets/poses"),  # ชุดท่าสำเร็จรูป (tools/train_poses.py)
     (str(ASSETS / "LICENSES.md"), "assets"),
     (str(ROOT / "config.toml"), "."),  # ต้นฉบับใน bundle (ใช้เมื่อไม่มี config.toml ข้าง exe)
     # mediapipe: ไฟล์ข้อมูลที่ไม่ใช่ .py (metadata ของ tasks ฯลฯ)

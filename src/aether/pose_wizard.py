@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -29,9 +30,11 @@ from PySide6.QtWidgets import (
 from . import ui_style
 from .calibration_wizard import HandPreview
 from .config import Config
+from .hotkeys import parse_action
 from .pose_teach import TeachSession
-from .poses import PoseClassifier, PoseLibrary, save_poses
+from .poses import MAX_NEGATIVES, PoseClassifier, PoseFileError, PoseLibrary, save_poses
 from .tracker import HandFrame
+from .training import load_builtin_pack
 
 __all__ = ["ACTION_PRESETS", "PoseWizard"]
 
@@ -64,11 +67,24 @@ class PoseWizard(QWidget):
     finished = Signal(bool)  # True = poses.json เปลี่ยน (สอน/ลบท่าแล้ว), False = ไม่มีอะไรเปลี่ยน
 
     def __init__(
-        self, config: Config, library: PoseLibrary, path: Path, parent: QWidget | None = None
+        self,
+        config: Config,
+        library: PoseLibrary,
+        path: Path,
+        parent: QWidget | None = None,
+        *,
+        pack: tuple[PoseLibrary, dict] | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
         self._library = library
+        if pack is None:
+            try:
+                pack = load_builtin_pack()
+            except PoseFileError as exc:
+                log.warning("ชุดท่าสำเร็จรูปเสีย — ไม่แสดง: %s", exc)
+                pack = (PoseLibrary(), {})
+        self._pack, self._pack_meta = pack
         self._classifier = PoseClassifier(library, config.poses.sensitivity)
         self._path = path
         self._session: TeachSession | None = None
@@ -130,6 +146,21 @@ class PoseWizard(QWidget):
         self._close_button = QPushButton("ปิด")
         self._close_button.clicked.connect(self.close)
 
+        # ---- ท่าสำเร็จรูป (สอนล่วงหน้าด้วยมือสังเคราะห์ — ไม่ต้องสอนเอง) ----
+        descriptions = self._pack_meta.get("descriptions", {})
+        self._builtin = QComboBox()
+        for pose in self._pack.poses:
+            self._builtin.addItem(f"{pose.name} — {descriptions.get(pose.name, '')}", pose.name)
+        self._builtin_action = QComboBox()
+        self._builtin_action.setEditable(True)
+        self._builtin_action.addItems(ACTION_PRESETS)
+        self._builtin_button = QPushButton("เพิ่มท่านี้")
+        self._builtin_button.clicked.connect(
+            lambda: self.add_builtin(
+                self._builtin.currentData(), self._builtin_action.currentText()
+            )
+        )
+
         list_row = QHBoxLayout()
         list_row.addWidget(self._live, 1)
         list_row.addWidget(self._delete_button)
@@ -148,6 +179,13 @@ class PoseWizard(QWidget):
         layout.addLayout(list_row)
         layout.addSpacing(8)
         layout.addLayout(teach_row)
+        if self._pack.poses:
+            builtin_row = QHBoxLayout()
+            builtin_row.addWidget(QLabel("ท่าสำเร็จรูป"))
+            builtin_row.addWidget(self._builtin, 2)
+            builtin_row.addWidget(self._builtin_action, 1)
+            builtin_row.addWidget(self._builtin_button)
+            layout.addLayout(builtin_row)
         layout.addSpacing(8)
         layout.addWidget(self._title)
         layout.addWidget(self._instruction)
@@ -204,6 +242,34 @@ class PoseWizard(QWidget):
         self._session = None
         self._hint.setText("")
         self._fill_list(select=session.name)
+        self._refresh()
+        return True
+
+    @property
+    def pack(self) -> PoseLibrary:
+        return self._pack
+
+    def add_builtin(self, name: str | None, action: str) -> bool:
+        """เพิ่มท่าสำเร็จรูป ``name`` ผูกกับ ``action`` (ไม่ต้องสอน) — ติดยากเมื่อใช้จริง: สอนทับด้วยชื่อเดิม"""
+        template = self._pack.get(name or "")
+        if template is None or self._session is not None:
+            return False
+        try:
+            parse_action(action)
+            library = self._library.with_pose(replace(template, action=action.strip()))
+        except ValueError as exc:
+            self._hint.setText(str(exc))
+            self._refresh()
+            return False
+        # มือปกติ: ของผู้ใช้เองสำคัญกว่า เติมของชุดสำเร็จรูปเฉพาะที่ยังว่าง
+        own = library.negatives
+        room = max(0, MAX_NEGATIVES - len(own))
+        library = replace(library, negatives=(*self._pack.negatives[:room], *own))
+        if not self._write(library):
+            return False
+        log.info("เพิ่มท่าสำเร็จรูป %s → %s", template.name, action)
+        self._hint.setText(f"เพิ่มท่า {template.name} แล้ว — ลองทำท่าดู ถ้าติดยาก ให้สอนทับด้วยชื่อเดียวกัน")
+        self._fill_list(select=template.name)
         self._refresh()
         return True
 
@@ -294,6 +360,7 @@ class PoseWizard(QWidget):
         self._name.setEnabled(not teaching)
         self._action.setEnabled(not teaching)
         self._start_button.setEnabled(not teaching)
+        self._builtin_button.setEnabled(not teaching)
         self._list.setEnabled(not teaching)
         self._delete_button.setEnabled(not teaching and self._list.currentItem() is not None)
         self._cancel_button.setEnabled(teaching)

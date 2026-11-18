@@ -92,7 +92,8 @@ def hand_metrics(hand: Hand, width: int, height: int) -> HandMetrics:
     # หันฝ่ามือ: เครื่องหมายของ cross product (ข้อมือ→โคนชี้) × (ข้อมือ→โคนก้อย) กลับกันตามข้างมือ
     index, pinky = lm[LM.INDEX_MCP], lm[LM.PINKY_MCP]
     cross = (index.x - wrist.x) * (pinky.y - wrist.y) - (index.y - wrist.y) * (pinky.x - wrist.x)
-    palm = cross < 0 if hand.handedness == "right" else cross > 0
+    # ภาพ mirror แบบ selfie: มือขวาหันฝ่ามือเข้ากล้อง = นิ้วโป้งอยู่ซ้ายของภาพ → cross > 0
+    palm = cross > 0 if hand.handedness == "right" else cross < 0
     return HandMetrics(
         hand.handedness,
         tuple(finger_extended(hand, f, width, height) for f in _FINGERS),
