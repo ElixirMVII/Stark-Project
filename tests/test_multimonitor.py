@@ -174,7 +174,7 @@ def test_secondary_overlay_has_no_panels_and_no_boot(theme):
     assert overlay.screen_geometry == RIGHT.geometry
     # minimal (ค่าเริ่มต้น) ไม่มีอนุภาค
     assert set(overlay._elements) == {
-        "boot", "streak", "collapse", "radial", "charge", "launcher", "target", "reticle"
+        "boot", "streak", "collapse", "radial", "charge", "knob", "launcher", "target", "reticle"
     }  # fmt: skip
     overlay.start()
     assert not overlay._boot.active(overlay._clock.t)  # boot เล่นเฉพาะจอหลัก

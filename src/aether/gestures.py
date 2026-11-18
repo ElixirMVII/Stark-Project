@@ -7,10 +7,11 @@ Pure logic ล้วน — ไม่แตะ OS ไม่แตะเวลา
 
     DISARMED ──(hotkey/🤟)──► IDLE ◄──► POINTER ──► PINCH_PENDING ──► DRAGGING
                                 │          │  ▲            │ ปล่อยก่อน drag_hold_ms = CLICK
-                                │          ▼  │
-                                │        SCROLL (✌️)
+                                │          ▼  │            │ (จีบด้วยนิ้วกลาง = คลิกขวา, นาง = คลิกกลาง,
+                                │        SCROLL (✌️)        │  ก้อย = ACTION pinky_pinch)
+                                ├──► KNOB (☝️ ค้างนิ่ง) ──► หมุนมือทุก knob_step_deg = ACTION knob_*
                                 ├──► GESTURE (🖐) ──► ปัด 4 ทิศ → ACTION + cooldown
-                                ├──► CHARGING (✊/🤟/👍/ท่าที่สอนเอง ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM / เปิดเมนู
+                                ├──► CHARGING (✊/🤟/👍/👎/ท่าที่สอนเอง ค้าง) ──► ACTION ครั้งเดียว / สลับ ARM / เปิดเมนู
                                 │                                  └──► LAUNCHER ──(จีบ)──► launch_N
                                 │   ✊ แล้วขยับก่อนครบเวลา ──► WINDOW_DRAG ──(แบมือ)──► วาง / โยน
                                 └──► TWO_HAND_ZOOM (จีบสองมือพร้อมกัน) ──► ZOOM
@@ -34,7 +35,15 @@ from dataclasses import dataclass
 
 from .config import Config
 from .filters import OneEuroFilter2D
-from .geometry import Finger, finger_curled, hand_scale, palm_center, pinch_ratio, pointer_anchor
+from .geometry import (
+    Finger,
+    finger_curled,
+    hand_roll,
+    hand_scale,
+    palm_center,
+    pinch_ratio,
+    pointer_anchor,
+)
 from .mapping import PointerTracker, ScreenArea, map_to_screen
 from .poses import POSE_PREFIX, PoseClassifier, PoseMatch
 from .snap import MagneticSnap, Target
@@ -77,15 +86,24 @@ GESTURE_PALM = "Open_Palm"
 GESTURE_FIST = "Closed_Fist"
 GESTURE_ARM = "ILoveYou"
 GESTURE_LAUNCH = "Thumb_Up"
+GESTURE_THUMB_DOWN = "Thumb_Down"
+GESTURE_POINT = "Pointing_Up"
 
 CHARGE_FIST = "fist_hold"  # ตรงกับชื่อ action ใน [actions] ของ config
 CHARGE_ARM = "arm"
 CHARGE_LAUNCH = "launcher"
+CHARGE_THUMB = "thumb_down_hold"  # ตรงกับชื่อ action ใน [actions]
+CHARGE_KNOB = "knob"  # แสดงบน HUD เท่านั้น (☝️ ค้างนิ่งก่อนเป็นปุ่มหมุน ไม่ได้ผ่าน state CHARGING)
 _CHARGE_GESTURE = {
     CHARGE_FIST: GESTURE_FIST,
     CHARGE_ARM: GESTURE_ARM,
     CHARGE_LAUNCH: GESTURE_LAUNCH,
+    CHARGE_THUMB: GESTURE_THUMB_DOWN,
 }
+ACTION_PINKY = "pinky_pinch"  # จีบโป้ง+ก้อย
+ACTION_KNOB_RIGHT = "knob_right"
+ACTION_KNOB_LEFT = "knob_left"
+KNOB_STILL = 0.025  # ☝️ ต้องขยับไม่เกินเท่านี้ (normalized) ตลอด knob_hold_ms จึงเป็นปุ่มหมุน
 # ท่าที่สอนเอง: ชนิดของการนับ = ชื่อท่า = ชื่อ action = "pose:<ชื่อ>" (ดู aether.poses)
 
 LAUNCH_DEADZONE = 0.06  # ต้องขยับมือห่างจากจุดเปิดเมนูเกินเท่านี้ (สัดส่วนของความกว้างเฟรม) จึงเลือกช่อง
@@ -105,7 +123,21 @@ def reserved_gestures(config: Config) -> frozenset[str]:
     reserved = {GESTURE_SCROLL, GESTURE_PALM, GESTURE_FIST, GESTURE_ARM}
     if config.launcher.enabled and config.launcher.items:
         reserved.add(GESTURE_LAUNCH)
+    if _bound(config.actions.thumb_down_hold):
+        reserved.add(GESTURE_THUMB_DOWN)
+    if _knob_enabled(config):
+        reserved.add(GESTURE_POINT)
     return frozenset(reserved)
+
+
+def _bound(spec: str) -> bool:
+    """ผูก action ไว้จริง (ไม่ใช่ ``"none"``)"""
+    return spec.strip().lower() != "none"
+
+
+def _knob_enabled(config: Config) -> bool:
+    actions = config.actions
+    return config.gestures.knob and (_bound(actions.knob_right) or _bound(actions.knob_left))
 
 
 def _charge_gesture(kind: str) -> str:
@@ -125,6 +157,7 @@ class State(enum.Enum):
     TWO_HAND_ZOOM = "TWO_HAND_ZOOM"
     LAUNCHER = "LAUNCHER"  # เมนูวงกลมเปิดอยู่: เคอร์เซอร์หยุด เลือกช่องด้วยทิศของมือ
     WINDOW_DRAG = "WINDOW_DRAG"  # ✊ ถือหน้าต่างอยู่: หน้าต่างและเคอร์เซอร์ขยับตามมือ
+    KNOB = "KNOB"  # ☝️ ค้างนิ่งแล้ว: หมุนมือ = หมุนปุ่ม (ค่าเริ่มต้น: ปรับเสียง) เคอร์เซอร์หยุด
 
 
 class EventKind(enum.Enum):
@@ -187,6 +220,7 @@ class EngineSnapshot:
     target: Target | None = None  # ปุ่มที่ล็อกเป้า/ดูดอยู่ (M6) — None = ไม่มี
     hand_size: float | None = None  # ขนาดมือในภาพ ÷ ความกว้างเฟรม (ใหญ่ = ใกล้กล้อง) — HUD ใช้แทนความลึก
     pointer: tuple[int, int] | None = None  # ตำแหน่งเคอร์เซอร์ก่อน snap (ใช้ถามหาปุ่มใต้มือ)
+    knob: float | None = None  # state = KNOB: หมุนไปแล้วกี่องศา (บวก = ตามเข็ม) นับจากตอนเริ่ม
 
 
 class GestureVoter:
@@ -234,6 +268,11 @@ class _Metrics:
     in_region: bool  # มืออยู่ใน active region (+ขอบเผื่อ)
     pose: PoseMatch | None = None
     hand_size: float = 0.0
+    ring_raw: float = math.inf  # โป้ง↔นาง (คลิกกลาง)
+    pinky_raw: float = math.inf  # โป้ง↔ก้อย
+    ring: float = math.inf  # inf ถ้านิ้วงอเข้าฝ่ามือ
+    pinky: float = math.inf
+    roll: float = 0.0  # มุมเอียงของมือในภาพ (องศา) — ใช้กับปุ่มหมุน
 
 
 class GestureEngine:
@@ -279,7 +318,7 @@ class GestureEngine:
 
         # นิ้วต้อง "ห่างเกิน pinch.off" ให้เห็นก่อนหนึ่งครั้ง จึงจะเริ่มจีบได้
         # (กันคลิกเองตอน arm หรือตอนมือเพิ่งเข้าเฟรมในท่านิ้วชิดกันอยู่แล้ว)
-        self._ready = {"left": False, "right": False}
+        self._ready = dict.fromkeys(_PINCH_BUTTONS, False)
         self._pinch_button: str | None = None
         self._pinch_t0 = 0
         self._pinch_fired = False
@@ -318,6 +357,13 @@ class GestureEngine:
         # WINDOW_DRAG (✊ หยิบหน้าต่าง)
         self._charge_anchor = (0.0, 0.0)
         self._drag_history: deque[tuple[int, float, float]] = deque()
+
+        # KNOB (☝️ ค้างนิ่ง → หมุนมือ)
+        self._knob_since: int | None = None  # เวลาที่เริ่มเห็น ☝️ นิ่ง
+        self._knob_anchor = (0.0, 0.0)
+        self._knob_ref = 0.0  # มุมของมือที่นับเป็น "ศูนย์" ของ step ถัดไป
+        self._knob_turned = 0.0  # องศาที่นับเป็น step ไปแล้ว
+        self._knob_angle = 0.0  # มุมรวมล่าสุด (สำหรับ HUD)
 
     # ---- public --------------------------------------------------------- #
 
@@ -480,8 +526,12 @@ class GestureEngine:
         width, height = frame.width, frame.height
         index_raw = pinch_ratio(hand, width, height, LM.INDEX_TIP)
         middle_raw = pinch_ratio(hand, width, height, LM.MIDDLE_TIP)
+        ring_raw = pinch_ratio(hand, width, height, LM.RING_TIP)
+        pinky_raw = pinch_ratio(hand, width, height, LM.PINKY_TIP)
         index_curled = finger_curled(hand, Finger.INDEX, width, height)
         middle_curled = finger_curled(hand, Finger.MIDDLE, width, height)
+        ring_curled = finger_curled(hand, Finger.RING, width, height)
+        pinky_curled = finger_curled(hand, Finger.PINKY, width, height)
         anchor = pointer_anchor(hand)
         self._last_anchor = anchor
         mapped = map_to_screen(*anchor, self._cfg.pointer.active_region, self._screen)
@@ -504,6 +554,11 @@ class GestureEngine:
             in_region=self._in_region(anchor),
             pose=pose,
             hand_size=hand_scale(hand, width, height) / max(width, 1),
+            ring_raw=ring_raw,
+            pinky_raw=pinky_raw,
+            ring=math.inf if ring_curled else ring_raw,
+            pinky=math.inf if pinky_curled else pinky_raw,
+            roll=hand_roll(hand, width, height),
         )
 
     def _in_region(self, anchor: tuple[float, float]) -> bool:
@@ -535,7 +590,7 @@ class GestureEngine:
         self._pointer.reset()
         self._snap.reset()
         self._raw_cursor = None
-        self._ready = {"left": False, "right": False}
+        self._ready = dict.fromkeys(_PINCH_BUTTONS, False)
         self._end_pinch()
         self._scroll_axis = None
         self._scroll_remainder = 0.0
@@ -546,6 +601,7 @@ class GestureEngine:
         self._zoom_ref = None
         self._launcher_selection = None
         self._drag_history.clear()
+        self._knob_since = None
         if pose_released:
             self._voter.reset()
             self._hold_block = None
@@ -563,10 +619,9 @@ class GestureEngine:
     ) -> None:
         self._last_seen = now
         pinch = self._cfg.pinch
-        if m.index_raw > pinch.off:
-            self._ready["left"] = True
-        if m.middle_raw > pinch.off:
-            self._ready["right"] = True
+        for button in _PINCH_BUTTONS:
+            if _pinch_raw(m, button) > pinch.off:
+                self._ready[button] = True
         if (
             self._hold_block is not None
             and m.gesture != self._hold_block
@@ -603,6 +658,8 @@ class GestureEngine:
             self._while_zoom(other, m, frame, now, events)
         elif self._state is State.LAUNCHER:
             self._while_launcher(hand, m, frame, now, events)
+        elif self._state is State.KNOB:
+            self._while_knob(m, now, events)
         else:
             self._while_pointing(hand, m, now, events)
 
@@ -622,7 +679,10 @@ class GestureEngine:
             self._scroll_remainder = 0.0
             return
         pinch = self._cfg.pinch
-        near_pinch = min(m.index, m.middle) < pinch.on * PINCH_LOCK_FACTOR
+        near_pinch = self._closest_pinch(m) < pinch.on * PINCH_LOCK_FACTOR
+        if self._knob_ready(m, now):
+            self._enter_knob(m)
+            return
         if m.in_region:
             if m.gesture == GESTURE_PALM:
                 self._state = State.GESTURE
@@ -646,25 +706,27 @@ class GestureEngine:
     def _begin_pinch(self, m: _Metrics, now: int) -> None:
         """เริ่มการจีบถ้านิ้วชิดพอ (และเคยเห็นนิ้วห่างมาก่อน) → PINCH_PENDING หรือซูมสองมือ"""
         pinch = self._cfg.pinch
-        left = self._ready["left"] and m.index < pinch.on
-        right = self._ready["right"] and m.middle < pinch.on
-        if left and right:  # สองนิ้วชิดโป้งพร้อมกัน: นิ้วที่ชิดกว่าชนะ
-            left = m.index <= m.middle
-            right = not left
-        if left or right:
-            self._pinch_button = "left" if left else "right"
-            self._ready[self._pinch_button] = False
+        # นิ้วที่ชิดโป้งพอ (และเคยห่างมาก่อน) — หลายนิ้วพร้อมกัน: นิ้วที่ชิดที่สุดชนะ
+        candidates = [
+            (_pinch_effective(m, button), button)
+            for button in self._pinch_buttons()
+            if self._ready[button] and _pinch_effective(m, button) < pinch.on
+        ]
+        if candidates:
+            _, button = min(candidates)
+            self._pinch_button = button
+            self._ready[button] = False
             self._pinch_t0 = now
             self._pinch_fired = False
             self._state = State.PINCH_PENDING
-            if left and self._zoom_synced(now):
+            if button == "left" and self._zoom_synced(now):
                 self._enter_zoom()  # มืออีกข้างจีบอยู่ก่อนแล้ว: เป็นซูมสองมือ
 
     def _while_pinch_pending(self, m: _Metrics, now: int, events: list[GestureEvent]) -> None:
         pinch = self._cfg.pinch
-        button = self._pinch_button
-        raw = m.index_raw if button == "left" else m.middle_raw
-        effective = m.index if button == "left" else m.middle
+        button = self._pinch_button or "left"
+        raw = _pinch_raw(m, button)
+        effective = _pinch_effective(m, button)
         held = now - self._pinch_t0
         if button == "left" and self._zoom_synced(self._pinch_t0):
             self._enter_zoom()  # มืออีกข้างจีบตามมาทัน: เป็นซูมสองมือ ไม่ใช่คลิก/ลาก
@@ -685,9 +747,14 @@ class GestureEngine:
             self._release_since = None
             self._last_click = None
             self._state = State.DRAGGING
-        elif button == "right" and not self._pinch_fired and held >= MIN_PINCH_MS:
+        elif button in ("right", "middle") and not self._pinch_fired and held >= MIN_PINCH_MS:
             x, y = self._cursor_or_origin()
-            events.append(GestureEvent(EventKind.CLICK, x=x, y=y, button="right"))
+            events.append(GestureEvent(EventKind.CLICK, x=x, y=y, button=button))
+            self._pinch_fired = True
+            self._last_click = None
+        elif button == "pinky" and not self._pinch_fired and held >= MIN_PINCH_MS:
+            x, y = self._cursor_or_origin()
+            events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=ACTION_PINKY))
             self._pinch_fired = True
             self._last_click = None
 
@@ -702,6 +769,22 @@ class GestureEngine:
                 self._state = State.POINTER
         else:
             self._release_since = None
+
+    def _pinch_buttons(self) -> tuple[str, ...]:
+        """นิ้วที่จีบแล้วมีผล: ชี้ (ซ้าย), กลาง (ขวา), นาง (ปุ่มกลาง ถ้าเปิด), ก้อย (ถ้าผูก action)"""
+        buttons = ["left", "right"]
+        if self._cfg.gestures.middle_click:
+            buttons.append("middle")
+        if _bound(self._cfg.actions.pinky_pinch):
+            buttons.append("pinky")
+        return tuple(buttons)
+
+    def _closest_pinch(self, m: _Metrics) -> float:
+        return min(_pinch_effective(m, button) for button in self._pinch_buttons())
+
+    @property
+    def _knob_on(self) -> bool:
+        return _knob_enabled(self._cfg)
 
     def _end_pinch(self) -> None:
         self._pinch_button = None
@@ -775,6 +858,8 @@ class GestureEngine:
             return CHARGE_ARM
         if gesture == GESTURE_LAUNCH and self._launcher_items:
             return CHARGE_LAUNCH
+        if gesture == GESTURE_THUMB_DOWN and _bound(self._cfg.actions.thumb_down_hold):
+            return CHARGE_THUMB
         return None
 
     def _charge_duration(self, kind: str) -> int:
@@ -783,6 +868,10 @@ class GestureEngine:
             return self._cfg.launcher.hold_ms
         if kind.startswith(POSE_PREFIX):
             return self._cfg.poses.hold_ms
+        if kind == CHARGE_THUMB:
+            return cfg.thumb_hold_ms
+        if kind == CHARGE_KNOB:
+            return cfg.knob_hold_ms
         return cfg.arm_hold_ms if kind == CHARGE_ARM else cfg.fist_hold_ms
 
     def _block_hold(self, gesture: str, now: int) -> None:
@@ -828,6 +917,45 @@ class GestureEngine:
         elif now - self._charge_t0 >= self._cfg.gestures.arm_hold_ms:
             self._block_hold(GESTURE_ARM, now)
             events.extend(self.set_armed(True))
+
+    # ---- KNOB: ☝️ ค้างนิ่ง → หมุนมือ = หมุนปุ่ม ------------------------------ #
+
+    def _knob_ready(self, m: _Metrics, now: int) -> bool:
+        """นับเวลาที่ ☝️ นิ่ง (เคอร์เซอร์ยังขยับตามปกติระหว่างนับ) คืน ``True`` เมื่อครบ ``knob_hold_ms``"""
+        if not (self._knob_on and m.in_region and m.gesture == GESTURE_POINT):
+            self._knob_since = None
+            return False
+        ax, ay = self._knob_anchor
+        if self._knob_since is None or math.hypot(m.anchor[0] - ax, m.anchor[1] - ay) > KNOB_STILL:
+            self._knob_since, self._knob_anchor = now, m.anchor  # ขยับ = เริ่มนับใหม่
+            return False
+        return now - self._knob_since >= self._cfg.gestures.knob_hold_ms
+
+    def _enter_knob(self, m: _Metrics) -> None:
+        self._state = State.KNOB
+        self._knob_since = None
+        self._knob_ref = m.roll
+        self._knob_turned = 0.0
+        self._knob_angle = 0.0
+
+    def _while_knob(self, m: _Metrics, now: int, events: list[GestureEvent]) -> None:
+        if m.gesture != GESTURE_POINT:  # เลิกชี้ขึ้น = ปล่อยปุ่มหมุน
+            self._resume_pointer(m)
+            return
+        step = self._cfg.gestures.knob_step_deg
+        delta = (m.roll - self._knob_ref + 180.0) % 360.0 - 180.0
+        x, y = self._cursor_or_origin()
+        while delta >= step:
+            events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=ACTION_KNOB_RIGHT))
+            self._knob_ref += step
+            self._knob_turned += step
+            delta -= step
+        while delta <= -step:
+            events.append(GestureEvent(EventKind.ACTION, x=x, y=y, name=ACTION_KNOB_LEFT))
+            self._knob_ref -= step
+            self._knob_turned -= step
+            delta += step
+        self._knob_angle = self._knob_turned + delta
 
     # ---- WINDOW_DRAG: ✊ หยิบหน้าต่างลาก / โยน ------------------------------ #
 
@@ -1067,16 +1195,21 @@ class GestureEngine:
         level = 0.0
         hold = 0.0
         if m is not None:
-            closest = min(m.index, m.middle)
+            closest = self._closest_pinch(m)
             level = min(max((pinch.off - closest) / (pinch.off - pinch.on), 0.0), 1.0)
         if self._state is State.PINCH_PENDING and self._pinch_button == "left":
             hold = min(max((now - self._pinch_t0) / pinch.drag_hold_ms, 0.0), 1.0)
         elif self._state is State.DRAGGING:
             hold = 1.0
         charge = 0.0
+        charge_kind = self._charge_kind
         if self._charge_kind is not None:
             duration = self._charge_duration(self._charge_kind)
             charge = min(max((now - self._charge_t0) / duration, 0.0), 1.0)
+        elif self._knob_since is not None and self._state is State.POINTER:
+            progress = (now - self._knob_since) / self._cfg.gestures.knob_hold_ms
+            if progress >= 0.2:  # ชี้ขึ้นแวบเดียวไม่ต้องขึ้นวงแหวน
+                charge, charge_kind = min(progress, 1.0), CHARGE_KNOB
         return EngineSnapshot(
             state=self._state,
             armed=self._armed,
@@ -1089,7 +1222,7 @@ class GestureEngine:
             pinch_button="left" if self._state is State.DRAGGING else self._pinch_button,
             hold_progress=hold,
             charge=charge,
-            charge_kind=self._charge_kind,
+            charge_kind=charge_kind,
             swipe_ready=self._state is State.GESTURE and self._swipe_ready,
             launcher_selection=(
                 self._launcher_selection if self._state is State.LAUNCHER else None
@@ -1102,7 +1235,26 @@ class GestureEngine:
             ),
             pointer=self._raw_cursor,
             hand_size=m.hand_size if m is not None else None,
+            knob=self._knob_angle if self._state is State.KNOB else None,
         )
+
+
+_PINCH_BUTTONS = ("left", "right", "middle", "pinky")
+
+
+def _pinch_raw(m: _Metrics, button: str) -> float:
+    """ระยะโป้ง↔นิ้วของปุ่มนั้น (ค่าดิบ) ÷ ขนาดมือ"""
+    return {
+        "left": m.index_raw,
+        "right": m.middle_raw,
+        "middle": m.ring_raw,
+        "pinky": m.pinky_raw,
+    }[button]
+
+
+def _pinch_effective(m: _Metrics, button: str) -> float:
+    """เหมือน :func:`_pinch_raw` แต่เป็น inf เมื่อนิ้วงอเข้าฝ่ามือ (กำมือ ไม่ใช่จีบ)"""
+    return {"left": m.index, "right": m.middle, "middle": m.ring, "pinky": m.pinky}[button]
 
 
 def _beyond(delta: float, deadband: float) -> float:

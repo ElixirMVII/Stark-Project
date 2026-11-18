@@ -166,7 +166,7 @@ def reticle_mode(snapshot: EngineSnapshot) -> str:
         return "SCROLL"
     if state is State.TWO_HAND_ZOOM:
         return "ZOOM"
-    if state is State.GESTURE:
+    if state in (State.GESTURE, State.KNOB):  # ปุ่มหมุน: หน้าปัด (KnobDial) วาดรอบ reticle ที่กางอยู่
         return "GESTURE"
     if state is State.CHARGING:
         return "CHARGING"

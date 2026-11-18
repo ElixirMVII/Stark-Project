@@ -19,7 +19,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-__all__ = ["BUILTIN_ACTIONS", "Hotkey", "HotkeyManager", "parse_action", "parse_hotkey"]
+__all__ = [
+    "BUILTIN_ACTIONS",
+    "MEDIA_KEYS",
+    "Hotkey",
+    "HotkeyManager",
+    "parse_action",
+    "parse_hotkey",
+]
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +58,16 @@ _NAMED_KEYS: dict[str, int] = {
     "down": 0x28,
     "pause": 0x13,
     **{f"f{n}": 0x70 + n - 1 for n in range(1, 25)},
+    # ปุ่มสื่อ/เสียง (ใช้เดี่ยวๆ ได้ เช่น actions.thumb_down_hold = "media_play_pause")
+    "volume_mute": 0xAD,
+    "volume_down": 0xAE,
+    "volume_up": 0xAF,
+    "media_next": 0xB0,
+    "media_prev": 0xB1,
+    "media_stop": 0xB2,
+    "media_play_pause": 0xB3,
 }
+MEDIA_KEYS = frozenset(name for name, vk in _NAMED_KEYS.items() if 0xAD <= vk <= 0xB3)
 
 _MOD_FLAGS = {"alt": 0x0001, "ctrl": 0x0002, "shift": 0x0004, "win": 0x0008}
 _MOD_NOREPEAT = 0x4000
@@ -142,7 +158,8 @@ def parse_action(spec: str) -> Hotkey | str:
     """แปลงค่าใน ``[actions]`` ของ config: ชื่อ action สำเร็จรูป หรือปุ่มลัดที่จะกดให้
 
     - ``"minimize_foreground"`` — ย่อหน้าต่างที่ active, ``"none"`` — ไม่ทำอะไร (ปิดท่านั้น)
-    - อย่างอื่นถือเป็นปุ่มลัด เช่น ``"ctrl+win+left"``, ``"win+tab"``, ``"alt+f4"``, ``"f11"``
+    - อย่างอื่นถือเป็นปุ่มลัด เช่น ``"ctrl+win+left"``, ``"win+tab"``, ``"alt+f4"``, ``"f11"``,
+      ``"media_play_pause"``, ``"volume_up"``
     """
     name = spec.strip().lower()
     if name in BUILTIN_ACTIONS:

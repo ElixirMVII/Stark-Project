@@ -21,15 +21,22 @@ from PySide6.QtWidgets import QWidget
 
 from ..camera import FramePacket
 from ..config import Config, assets_dir
-from ..gestures import ACTION_LAUNCH_PREFIX, ACTION_LAUNCHER_OPEN, EventKind, GestureEvent
+from ..gestures import (
+    ACTION_KNOB_LEFT,
+    ACTION_KNOB_RIGHT,
+    ACTION_LAUNCH_PREFIX,
+    ACTION_LAUNCHER_OPEN,
+    CHARGE_FIST,
+    EventKind,
+    GestureEvent,
+)
 from ..mapping import ScreenGeometry, physical_to_logical
-from ..poses import POSE_PREFIX
 from ..sound import SoundPlayer
 from .boot import BootSequence
 from .effects import PARTICLES_PER_BURST, MinimizeCollapse, ParticlePool, SwipeStreak
 from .launcher import LauncherMenu
 from .panels import HandRadar, StatusBadge, TelemetryPanel, TelemetrySampler
-from .radial import ChargeRing, Radial
+from .radial import ChargeRing, KnobDial, Radial
 from .reticle import Reticle
 from .target_lock import TargetLock
 from .theme import Theme, set_glow_quality
@@ -120,6 +127,7 @@ class HudOverlay(QWidget):
         actions = dataclasses.asdict(config.actions)
         self._radial = Radial(self._theme, actions)
         self._charge = ChargeRing(self._theme, actions)
+        self._knob = KnobDial(self._theme, actions, config.gestures.knob_step_deg)
         self._launcher = LauncherMenu(self._theme, [item.label for item in config.launcher.items])
         self._target_lock = TargetLock(self._theme, show_label=config.targeting.show_label)
         self._badge = StatusBadge(self._theme, dry_run=dry_run) if panels else None
@@ -143,6 +151,7 @@ class HudOverlay(QWidget):
             self._elements["radar"] = self._radar
         self._elements["radial"] = self._radial
         self._elements["charge"] = self._charge
+        self._elements["knob"] = self._knob
         self._elements["launcher"] = self._launcher
         self._elements["target"] = self._target_lock
         if self._particles is not None:
@@ -215,6 +224,8 @@ class HudOverlay(QWidget):
         self._refresh("radial")
         if self._charge.set_state(position, snapshot):
             self._refresh("charge")
+        if self._knob.set_state(position, snapshot):
+            self._refresh("knob")
         self._launcher.set_state(position, snapshot)
         self._refresh("launcher")
         self._target_lock.set_state(self._target_rect(snapshot), position, snapshot)
@@ -286,17 +297,21 @@ class HudOverlay(QWidget):
                             self._streak.start(direction, now)
                             self._refresh("streak")
                     self._play("swipe")
-                elif event.name.startswith(POSE_PREFIX):  # ท่าที่สอนเอง
-                    if here:
-                        point = self.to_logical(event.x, event.y)
-                        self._reticle.add_shockwave(point, theme.accent, now)
-                    self._play("click")
-                else:  # กำมือค้าง (ค่าเริ่มต้น: ย่อหน้าต่าง)
+                elif event.name in (ACTION_KNOB_RIGHT, ACTION_KNOB_LEFT):
+                    # ปุ่มหมุน: หน้าปัดวาบทุก step (ไม่มีเสียง — Windows แสดงระดับเสียงให้เองอยู่แล้ว)
+                    self._knob.step(1 if event.name == ACTION_KNOB_RIGHT else -1, now)
+                    self._refresh("knob")
+                elif event.name == CHARGE_FIST:  # กำมือค้าง (ค่าเริ่มต้น: ย่อหน้าต่าง)
                     if here:
                         point = self.to_logical(event.x, event.y)
                         self._reticle.add_shockwave(point, theme.accent, now)
                     self._start_collapse(now)
                     self._play("minimize")
+                else:  # ท่าที่สอนเอง, 👎 ค้าง, จีบโป้ง+ก้อย …
+                    if here:
+                        point = self.to_logical(event.x, event.y)
+                        self._reticle.add_shockwave(point, theme.accent, now)
+                    self._play("click")
             elif kind is EventKind.ARMED:
                 self.set_armed(True)
             elif kind is EventKind.DISARMED:
@@ -363,6 +378,7 @@ class HudOverlay(QWidget):
             ("boot", self._boot),
             ("radial", self._radial),
             ("launcher", self._launcher),
+            ("knob", self._knob),
             ("target", self._target_lock),
             ("reticle", self._reticle),
             ("streak", self._streak),

@@ -5,17 +5,27 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QPainter, QPainterPath
 
-from ..gestures import CHARGE_ARM, CHARGE_FIST, CHARGE_LAUNCH, EngineSnapshot, State
+from ..gestures import (
+    ACTION_KNOB_LEFT,
+    ACTION_KNOB_RIGHT,
+    CHARGE_ARM,
+    CHARGE_FIST,
+    CHARGE_KNOB,
+    CHARGE_LAUNCH,
+    EngineSnapshot,
+    State,
+)
 from ..hotkeys import Hotkey, parse_action
 from ..poses import POSE_PREFIX
-from .theme import Theme, arc_path, draw_label, glow_stroke
+from .theme import Theme, arc_path, draw_label, glow_stroke, with_alpha
 
-__all__ = ["DIRECTIONS", "ChargeRing", "Radial", "action_label"]
+__all__ = ["DIRECTIONS", "ChargeRing", "KnobDial", "Radial", "action_label", "knob_label"]
 
 DIRECTIONS = ("left", "right", "up", "down")
 
@@ -40,11 +50,19 @@ _KNOWN_LABELS = {
     ("ctrl", "win", "right"): "Desk",
     ("win", "tab"): "Tasks",
     ("win", "d"): "Desktop",
+    ("shift", "win", "s"): "Snip",
+    ("media_play_pause",): "Play/Pause",
+    ("media_next",): "Next track",
+    ("media_prev",): "Previous track",
+    ("media_stop",): "Stop",
+    ("volume_up",): "Volume up",
+    ("volume_down",): "Volume down",
+    ("volume_mute",): "Mute",
 }
 
 
 def _key_label(name: str) -> str:
-    return name.upper() if len(name) == 1 else name.capitalize()
+    return name.upper() if len(name) == 1 else name.replace("_", " ").capitalize()
 
 
 def action_label(spec: str) -> str:
@@ -208,12 +226,23 @@ class Radial:
             draw_label(painter, box, flags, self._labels[direction], color, alpha, pill=True)
 
 
+def knob_label(actions: Mapping[str, str]) -> str:
+    """ชื่อของปุ่มหมุน: ผูกกับปุ่มเสียงอยู่ = "Volume" ไม่งั้นบอกปุ่มลัดของทั้งสองทาง"""
+    right, left = actions.get(ACTION_KNOB_RIGHT, "none"), actions.get(ACTION_KNOB_LEFT, "none")
+    if (right.strip().lower(), left.strip().lower()) == ("volume_up", "volume_down"):
+        return "Volume"
+    return f"{action_label(left)} / {action_label(right)}"
+
+
 class ChargeRing:
-    """วงแหวนที่ค่อยๆ เติมเต็มระหว่างค้างท่า ✊ / 🤟 / 👍 / ท่าที่สอนเอง + ป้ายบอกผล"""
+    """วงแหวนที่ค่อยๆ เติมเต็มระหว่างค้างท่า ✊ / 🤟 / 👍 / 👎 / ☝️ / ท่าที่สอนเอง + ป้ายบอกผล"""
 
     def __init__(self, theme: Theme, actions: Mapping[str, str]) -> None:
         self._theme = theme
-        self._fist_label = action_label(actions.get(CHARGE_FIST, "none"))
+        # ชนิดของการนับที่ตรงกับชื่อ action (fist_hold, thumb_down_hold) → ป้ายของปุ่มลัดที่ผูกไว้
+        self._labels = {kind: action_label(spec) for kind, spec in actions.items()}
+        self._labels[CHARGE_KNOB] = knob_label(actions)
+        self._fist_label = self._labels.get(CHARGE_FIST, "—")
         self._center: QPointF | None = None
         self._charge = 0.0
         self._kind: str | None = None
@@ -231,6 +260,8 @@ class ChargeRing:
             text = "Apps"
         elif self._kind is not None and self._kind.startswith(POSE_PREFIX):
             text = self._kind.removeprefix(POSE_PREFIX)  # ชื่อท่าที่สอนเอง
+        elif self._kind in self._labels:
+            text = self._labels[self._kind]
         else:
             text = self._fist_label
         return self._theme.label(text)
@@ -295,3 +326,114 @@ class ChargeRing:
             cx - CHARGE_HALF_WIDTH, cy + CHARGE_RADIUS + 8.0, CHARGE_HALF_WIDTH * 2.0, 26.0
         )
         draw_label(painter, box, Qt.AlignmentFlag.AlignCenter, self.label(), theme.accent, 1.0)
+
+
+KNOB_RADIUS = 40.0  # minimal (holo ใช้ KNOB_RADIUS × 1.5)
+KNOB_SWEEP = 270.0  # หน้าปัดกว้างเท่านี้ (องศา) เริ่มที่ −135°
+KNOB_HALF = 120.0
+KNOB_FLASH_SECONDS = 0.25
+
+
+class KnobDial:
+    """หน้าปัดรอบ reticle ระหว่าง state ``KNOB``: เข็มชี้มุมที่หมุนไป + ขีดทุก step + ป้าย (เช่น Volume)
+
+    เข็มหมุนตามมือจริง (มุมของมือ × 1) แต่วนอยู่ในหน้าปัด ส่วนขีดสว่างวาบทุกครั้งที่นับเป็นหนึ่ง step
+    """
+
+    def __init__(self, theme: Theme, actions: Mapping[str, str], step_deg: float = 18.0) -> None:
+        self._theme = theme
+        self._label = knob_label(actions)
+        self._step = step_deg
+        self._center: QPointF | None = None
+        self._angle: float | None = None
+        self._alpha = 0.0
+        self._flash: tuple[int, float] | None = None  # (+1/−1, เวลา)
+        self._last_time: float | None = None
+
+    @property
+    def label(self) -> str:
+        return self._theme.label(self._label)
+
+    @property
+    def alpha(self) -> float:
+        return self._alpha
+
+    def set_state(self, center: QPointF | None, snapshot: EngineSnapshot) -> bool:
+        angle = snapshot.knob if center is not None and snapshot.state is State.KNOB else None
+        changed = angle != self._angle
+        self._angle = angle
+        if center is not None and angle is not None:
+            self._center = QPointF(center)
+        return changed
+
+    def step(self, direction: int, now: float) -> None:
+        self._flash = (direction, now)
+
+    def advance(self, now: float) -> bool:
+        dt = 0.0 if self._last_time is None else max(0.0, min(now - self._last_time, 0.1))
+        self._last_time = now
+        self._alpha = _fade(self._alpha, self._angle is not None, dt)
+        if self._flash is not None and now - self._flash[1] > KNOB_FLASH_SECONDS:
+            self._flash = None
+        return self._alpha > 0.0
+
+    def _radius(self) -> float:
+        return KNOB_RADIUS if self._theme.minimal else KNOB_RADIUS * 1.5
+
+    def rect(self) -> QRectF:
+        if self._center is None or self._alpha <= 0.0:
+            return QRectF()
+        c = self._center
+        half = self._radius() + 14.0
+        return QRectF(
+            c.x() - KNOB_HALF, c.y() - half, KNOB_HALF * 2.0, half + self._radius() + 44.0
+        )
+
+    def paint(self, painter: QPainter, now: float) -> None:
+        if self._center is None or self._alpha <= 0.0:
+            return
+        theme = self._theme
+        cx, cy = self._center.x(), self._center.y()
+        radius = self._radius()
+        alpha = self._alpha
+        start = -KNOB_SWEEP / 2.0
+        track = arc_path(cx, cy, radius, start, KNOB_SWEEP)
+        theme.stroke(painter, track, theme.primary, 1.0, strength=0.4, alpha=0.35 * alpha)
+        # ขีดทุก step
+        ticks = QPainterPath()
+        count = int(KNOB_SWEEP / self._step)
+        for i in range(count + 1):
+            angle = math.radians(start + i * self._step)
+            dx, dy = math.sin(angle), -math.cos(angle)
+            ticks.moveTo(cx + dx * (radius + 4.0), cy + dy * (radius + 4.0))
+            ticks.lineTo(cx + dx * (radius + 8.0), cy + dy * (radius + 8.0))
+        theme.stroke(painter, ticks, theme.primary, 1.0, strength=0.3, alpha=0.4 * alpha)
+        # เข็ม: มุมที่หมุนไป (วนอยู่ในหน้าปัด)
+        turned = self._angle or 0.0
+        needle = max(-KNOB_SWEEP / 2.0, min(KNOB_SWEEP / 2.0, turned))
+        sweep = arc_path(cx, cy, radius, 0.0, needle) if abs(needle) > 0.5 else None
+        if sweep is not None:
+            theme.stroke(painter, sweep, theme.accent, 2.2, alpha=alpha)
+        angle = math.radians(needle)
+        tip = QPointF(cx + math.sin(angle) * radius, cy - math.cos(angle) * radius)
+        flash = 0.0
+        if self._flash is not None:
+            flash = max(0.0, 1.0 - (now - self._flash[1]) / KNOB_FLASH_SECONDS)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(with_alpha(theme.accent, alpha))
+        painter.drawEllipse(tip, 3.5 + 2.5 * flash, 3.5 + 2.5 * flash)
+        painter.setFont(
+            theme.text_font(12, 600) if theme.minimal else theme.display_font(12, 700, 2.0)
+        )
+        box = QRectF(cx - KNOB_HALF, cy + radius + 12.0, KNOB_HALF * 2.0, 26.0)
+        sign = "+" if self._flash and self._flash[0] > 0 else ("−" if self._flash else "")
+        text = f"{self.label} {sign}".strip()
+        draw_label(
+            painter,
+            box,
+            Qt.AlignmentFlag.AlignCenter,
+            text,
+            theme.accent,
+            alpha,
+            pill=theme.minimal,
+        )

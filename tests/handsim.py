@@ -22,6 +22,8 @@ PINCHED = 0.15  # จีบแน่น (ต่ำกว่า pinch.on = 0.25)
 
 _INDEX_DIR = (0.6, -0.8)  # ทิศจากปลายโป้งไปปลายนิ้วชี้ (เวกเตอร์หนึ่งหน่วย)
 _MIDDLE_DIR = (0.8, -0.6)
+_RING_DIR = (0.92, -0.39)
+_PINKY_DIR = (0.97, -0.24)
 
 
 def make_hand(
@@ -30,6 +32,8 @@ def make_hand(
     *,
     pinch: float = OPEN,
     middle_pinch: float = 1.2,
+    ring_pinch: float | None = None,
+    pinky_pinch: float | None = None,
     fist: bool = False,
     gesture: str = "None",
     score: float = 0.9,
@@ -74,6 +78,17 @@ def make_hand(
     px[LM.THUMB_TIP] = thumb
     px[LM.INDEX_TIP] = index_tip
     px[LM.MIDDLE_TIP] = middle_tip
+    for ratio, direction, joints in (
+        (ring_pinch, _RING_DIR, (LM.RING_MCP, LM.RING_PIP, LM.RING_DIP, LM.RING_TIP)),
+        (pinky_pinch, _PINKY_DIR, (LM.PINKY_MCP, LM.PINKY_PIP, LM.PINKY_DIP, LM.PINKY_TIP)),
+    ):
+        if ratio is None or fist:
+            continue
+        mcp, pip, dip, tip = joints  # ปลายนิ้วมาแตะโป้งที่ระยะ ratio (ข้อนิ้วเรียงตามเส้นตรง)
+        px[tip] = (thumb[0] + ratio * s * direction[0], thumb[1] + ratio * s * direction[1])
+        (x0, y0), (x1, y1) = px[mcp], px[tip]
+        px[pip] = (x0 + (x1 - x0) * 0.45, y0 + (y1 - y0) * 0.45)
+        px[dip] = (x0 + (x1 - x0) * 0.75, y0 + (y1 - y0) * 0.75)
     for mcp, pip, dip, tip in (
         (LM.INDEX_MCP, LM.INDEX_PIP, LM.INDEX_DIP, LM.INDEX_TIP),
         (LM.MIDDLE_MCP, LM.MIDDLE_PIP, LM.MIDDLE_DIP, LM.MIDDLE_TIP),

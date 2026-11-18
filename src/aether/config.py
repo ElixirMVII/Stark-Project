@@ -225,6 +225,11 @@ class GesturesConfig:
     arm_hold_ms: int = 1000
     zoom_step: float = 0.06
     window_grab: bool = True  # ✊ แล้วขยับ = หยิบหน้าต่างใต้เคอร์เซอร์ลาก/โยน (✊ นิ่งๆ ยังย่อหน้าต่างตามเดิม)
+    middle_click: bool = True  # จีบโป้ง+นาง = คลิกปุ่มกลาง (เปิดลิงก์ในแท็บใหม่ / ปิดแท็บ)
+    thumb_hold_ms: int = 700  # 👎 ค้างนานเท่านี้ = actions.thumb_down_hold
+    knob: bool = True  # ☝️ ค้างนิ่ง = ปุ่มหมุน (หมุนมือ = actions.knob_right / knob_left)
+    knob_hold_ms: int = 450  # ☝️ ต้องนิ่งนานเท่านี้จึงเป็นปุ่มหมุน (ชี้ขึ้นแล้วขยับ = เคอร์เซอร์ตามปกติ)
+    knob_step_deg: float = 18.0  # หมุนมือทุกๆ กี่องศา = กดหนึ่งครั้ง
 
     def __post_init__(self) -> None:
         _require(0.0 < self.swipe_dist_x <= 1.0, "gestures.swipe_dist_x ต้องอยู่ในช่วง (0, 1]")
@@ -243,6 +248,10 @@ class ActionsConfig:
     swipe_up: str = "win+tab"
     swipe_down: str = "win+d"
     fist_hold: str = "minimize_foreground"
+    pinky_pinch: str = "win+shift+s"  # จีบโป้ง+ก้อย (ค่าเริ่มต้น: เครื่องมือตัดภาพหน้าจอ)
+    thumb_down_hold: str = "media_play_pause"  # 👎 ค้าง
+    knob_right: str = "volume_up"  # ☝️ ค้างนิ่ง แล้วหมุนมือตามเข็ม (ทีละ knob_step_deg)
+    knob_left: str = "volume_down"  # … หมุนทวนเข็ม
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):

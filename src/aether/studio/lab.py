@@ -15,7 +15,14 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..geometry import Finger, finger_curled, finger_extended, hand_scale, pinch_ratio
+from ..geometry import (
+    Finger,
+    finger_curled,
+    finger_extended,
+    hand_roll,
+    hand_scale,
+    pinch_ratio,
+)
 from ..tracker import LM, Hand, Landmark
 
 __all__ = [
@@ -80,8 +87,8 @@ def hand_metrics(hand: Hand, width: int, height: int) -> HandMetrics:
         for tip in (LM.INDEX_TIP, LM.MIDDLE_TIP, LM.RING_TIP, LM.PINKY_TIP)
     )
     lm = hand.landmarks
-    wrist, middle = lm[LM.WRIST], lm[LM.MIDDLE_MCP]
-    roll = math.degrees(math.atan2((middle.x - wrist.x) * width, -(middle.y - wrist.y) * height))
+    wrist = lm[LM.WRIST]
+    roll = hand_roll(hand, width, height)
     # หันฝ่ามือ: เครื่องหมายของ cross product (ข้อมือ→โคนชี้) × (ข้อมือ→โคนก้อย) กลับกันตามข้างมือ
     index, pinky = lm[LM.INDEX_MCP], lm[LM.PINKY_MCP]
     cross = (index.x - wrist.x) * (pinky.y - wrist.y) - (index.y - wrist.y) * (pinky.x - wrist.x)

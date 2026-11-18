@@ -403,6 +403,15 @@ def foreground_minimizable_rect() -> tuple[int, int, int, int] | None:
     return win32_window_rect(target[0])
 
 
+# ชื่อปุ่มสื่อใน config → ชื่อใน pynput.keyboard.Key (ที่ไม่มีใน pynput ส่งเป็น virtual-key code)
+_PYNPUT_KEY_NAMES = {
+    "volume_mute": "media_volume_mute",
+    "volume_down": "media_volume_down",
+    "volume_up": "media_volume_up",
+    "media_prev": "media_previous",
+}
+
+
 class PynputBackend:
     """เมาส์/คีย์บอร์ดจริงผ่าน pynput (บน Windows คือ SetCursorPos + SendInput)"""
 
@@ -483,7 +492,8 @@ class PynputBackend:
                 return keyboard.KeyCode.from_vk(ord(name.upper()))
             return keyboard.KeyCode.from_char(name)
         try:
-            return keyboard.Key[name]  # ปุ่มที่มีชื่อ (ลูกศร, tab, esc, f1–f20 …) ได้ flag ถูกต้องจาก pynput
+            # ปุ่มที่มีชื่อ (ลูกศร, tab, esc, f1–f20, ปุ่มสื่อ …) ได้ flag ถูกต้องจาก pynput
+            return keyboard.Key[_PYNPUT_KEY_NAMES.get(name, name)]
         except KeyError:
             return keyboard.KeyCode.from_vk(Hotkey(frozenset(), name).vk)
 

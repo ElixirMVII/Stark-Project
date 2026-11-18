@@ -108,10 +108,24 @@ def test_low_confidence_builtin_gesture_does_not_block_the_pose():
 
 
 def test_unused_builtin_gesture_can_be_overridden():
-    # Pointing_Up ไม่ได้ใช้ทำอะไรใน engine — ท่าที่สอนเองทับได้
-    driver = driver_for()
+    # ปิดปุ่มหมุนแล้ว Pointing_Up ไม่ได้ใช้ทำอะไรใน engine — ท่าที่สอนเองทับได้
+    driver = driver_for(overrides={"gestures": {"knob": False}})
     driver.hold(make_pose_hand(ROCK, gesture="Pointing_Up", score=0.95), 800)
     assert actions(driver) == ["pose:rock"]
+
+
+def test_knob_and_thumb_down_reserve_their_gestures():
+    reserved = reserved_gestures(Config())
+    assert {"Pointing_Up", "Thumb_Down"} <= reserved
+    off = parse_config(
+        {
+            "gestures": {"knob": False},
+            "actions": {"thumb_down_hold": "none"},
+        }
+    )
+    assert not {"Pointing_Up", "Thumb_Down"} & reserved_gestures(off)
+    knob_unbound = parse_config({"actions": {"knob_right": "none", "knob_left": "none"}})
+    assert "Pointing_Up" not in reserved_gestures(knob_unbound)
 
 
 def test_thumb_up_is_reserved_only_while_the_launcher_is_on():

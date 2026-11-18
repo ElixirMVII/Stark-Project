@@ -58,6 +58,8 @@ KEY_GESTURES = {
     "3": "Closed_Fist",
     "4": "Victory",
     "5": "ILoveYou",
+    "6": "Thumb_Down",
+    "7": "Pointing_Up",
 }
 ARROWS = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}
 
@@ -75,6 +77,7 @@ SWIPE_MARGIN = 0.08  # ปัดไกลกว่าเกณฑ์ใน confi
 
 _INDEX_DIR = (0.6, -0.8)
 _MIDDLE_DIR = (0.8, -0.6)
+_RING_DIR = (0.92, -0.39)
 
 
 # --------------------------------------------------------------------------- #
@@ -147,6 +150,7 @@ def synthetic_hand(
     score: float = 0.95,
     pinch_index: float = OPEN_RATIO,
     pinch_middle: float = 1.2,
+    pinch_ring: float | None = None,
     fist: bool = False,
     scale: float = HAND_SCALE,
 ) -> Hand:
@@ -188,6 +192,12 @@ def synthetic_hand(
         )
         ring_tip, pinky_tip = at(0.31, -0.75), at(0.50, -0.50)
         ring_mid, pinky_mid = at(0.31, -0.40), at(0.50, -0.25)
+        if pinch_ring is not None:  # ปลายนิ้วนางมาแตะโป้ง (คลิกปุ่มกลาง)
+            ring_tip = (
+                thumb[0] + pinch_ring * scale * _RING_DIR[0] * flip,
+                thumb[1] + pinch_ring * scale * _RING_DIR[1],
+            )
+            ring_mid = _between(px[LM.RING_MCP], ring_tip, 0.45)
     px[LM.THUMB_TIP] = thumb
     px[LM.INDEX_TIP] = index_tip
     px[LM.MIDDLE_TIP] = middle_tip
@@ -256,7 +266,7 @@ class MouseHandModel:
         return self._gesture
 
     def press(self, button: str) -> None:
-        if button in ("left", "right"):
+        if button in ("left", "right", "middle"):  # ปุ่มกลาง = จีบโป้ง+นาง
             self._buttons.add(button)
 
     def release(self, button: str) -> None:
@@ -272,7 +282,7 @@ class MouseHandModel:
         self._last_wheel = now_ms
 
     def key(self, name: str, now_ms: int) -> None:
-        """ปุ่ม ``"1"``–``"5"`` เปลี่ยนท่า, ``"left"/"right"/"up"/"down"`` ปัด"""
+        """ปุ่ม ``"1"``–``"7"`` เปลี่ยนท่า, ``"left"/"right"/"up"/"down"`` ปัด"""
         if name in KEY_GESTURES:
             self._gesture = KEY_GESTURES[name]
         elif name in ARROWS and self._swipe is None and self._scroll_since is None:
@@ -307,6 +317,7 @@ class MouseHandModel:
             gesture=gesture,
             pinch_index=pinch_index,
             pinch_middle=pinch_middle,
+            pinch_ring=PINCH_RATIO if "middle" in self._buttons else None,
             fist=fist,
         )
         return HandFrame(now_ms, self._width, self._height, (hand,))
@@ -364,9 +375,9 @@ def key_name(key: Any) -> str | None:
         return name
     vk = getattr(key, "vk", None)
     if isinstance(vk, int):
-        if 0x31 <= vk <= 0x35:  # แถวตัวเลข 1–5
+        if 0x31 <= vk <= 0x37:  # แถวตัวเลข 1–7
             return str(vk - 0x30)
-        if 0x61 <= vk <= 0x65:  # numpad 1–5
+        if 0x61 <= vk <= 0x67:  # numpad 1–7
             return str(vk - 0x60)
     char = getattr(key, "char", None)
     if isinstance(char, str) and char in KEY_GESTURES:

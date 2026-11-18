@@ -124,7 +124,8 @@ def test_synthetic_hand_measures_as_requested():
         (SimpleNamespace(vk=None, char="3"), "3"),
         (SimpleNamespace(name="left"), "left"),
         (SimpleNamespace(name="up"), "up"),
-        (SimpleNamespace(vk=0x36, char="6"), None),
+        (SimpleNamespace(vk=0x36, char="6"), "6"),  # 👎
+        (SimpleNamespace(vk=0x38, char="8"), None),
         (SimpleNamespace(name="shift"), None),
     ],
 )

@@ -19,6 +19,7 @@ __all__ = [
     "distance_px",
     "finger_curled",
     "finger_extended",
+    "hand_roll",
     "hand_scale",
     "palm_center",
     "pinch_ratio",
@@ -80,6 +81,12 @@ def _distance(hand: Hand, a: int, b: int, width: int, height: int) -> float:
 def hand_scale(hand: Hand, width: int, height: int) -> float:
     """ขนาดมือในภาพ = ระยะ wrist(0) → middle MCP(9) เป็น px ใช้ normalize ระยะอื่นๆ"""
     return distance_px(hand.landmarks[LM.WRIST], hand.landmarks[LM.MIDDLE_MCP], width, height)
+
+
+def hand_roll(hand: Hand, width: int, height: int) -> float:
+    """มุมเอียงของมือในภาพ (องศา): 0 = นิ้วชี้ขึ้น, บวก = เอียงตามเข็มนาฬิกาบนจอ (ข้อมือ → โคนนิ้วกลาง)"""
+    wrist, middle = hand.landmarks[LM.WRIST], hand.landmarks[LM.MIDDLE_MCP]
+    return math.degrees(math.atan2((middle.x - wrist.x) * width, -(middle.y - wrist.y) * height))
 
 
 def pinch_ratio(hand: Hand, width: int, height: int, tip: int = LM.INDEX_TIP) -> float:

@@ -41,6 +41,11 @@ fist_hold_ms = 600
 arm_hold_ms = 1000
 zoom_step = 0.06
 window_grab = true          # ✊ แล้วขยับ = หยิบหน้าต่างลาก/โยน (✊ นิ่งๆ = ย่อหน้าต่าง)
+middle_click = true         # จีบโป้ง+นาง = คลิกปุ่มกลาง (เปิดลิงก์ในแท็บใหม่ / ปิดแท็บ)
+thumb_hold_ms = 700         # 👎 ค้างนานเท่านี้ = actions.thumb_down_hold
+knob = true                 # ☝️ ชี้ขึ้นค้างนิ่ง = ปุ่มหมุน (หมุนมือ = actions.knob_right / knob_left)
+knob_hold_ms = 450          # ต้องนิ่งนานเท่านี้ก่อน (ชี้ขึ้นแล้วขยับ = เคอร์เซอร์ตามปกติ)
+knob_step_deg = 18.0        # หมุนมือทุกกี่องศา = กดหนึ่งครั้ง
 
 [actions]
 swipe_left  = "ctrl+win+left"
@@ -48,6 +53,11 @@ swipe_right = "ctrl+win+right"
 swipe_up    = "win+tab"
 swipe_down  = "win+d"
 fist_hold   = "minimize_foreground"
+pinky_pinch = "win+shift+s"        # จีบโป้ง+ก้อย (ตัดภาพหน้าจอ)
+thumb_down_hold = "media_play_pause"  # 👎 ค้าง (เล่น/หยุดเพลง)
+knob_right  = "volume_up"          # ☝️ ปุ่มหมุน: หมุนตามเข็ม
+knob_left   = "volume_down"        #               หมุนทวนเข็ม
+# ปุ่มสื่อ/เสียงที่ใช้ได้: media_play_pause, media_next, media_prev, media_stop, volume_up, volume_down, volume_mute
 
 [hotkeys]
 toggle_arm = "<ctrl>+<alt>+g"
