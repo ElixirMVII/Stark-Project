@@ -392,7 +392,7 @@ def test_window_switches_pages_and_drops_held_things(studio):
 
 def test_window_lab_records_samples(studio, tmp_path):
     window, clock = studio
-    window.set_page(3)
+    window.set_page(window.pages.index(window.lab))
     window.lab_label.setText("open")
     feed(window, clock, lambda i: [make_hand(0.5, 0.4)], frames=3)
     assert window.lab.metrics is not None and window.lab.metrics.count >= 4

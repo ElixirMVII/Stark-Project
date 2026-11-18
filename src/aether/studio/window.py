@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from .. import ui_style
 from ..config import Config
 from ..tracker import HandFrame
+from .chem_page import ChemistryPage, chemistry_controls
 from .input import StudioInput
 from .pages import (
     DrawPage,
@@ -73,14 +74,22 @@ class StudioWindow(QWidget):
         self.sandbox = SandboxPage(clock=clock)
         self.theremin = ThereminPage(clock=clock, audio=audio)
         self.lab = LabPage(clock=clock, samples_path=samples_path)
-        self.pages: list[StudioPage] = [self.draw, self.sandbox, self.theremin, self.lab]
+        self.elements = ChemistryPage(clock=clock)
+        self.pages: list[StudioPage] = [
+            self.draw,
+            self.sandbox,
+            self.theremin,
+            self.elements,
+            self.lab,
+        ]
         controls = [
             draw_controls(self.draw),
             sandbox_controls(self.sandbox),
             theremin_controls(self.theremin),
+            chemistry_controls(self.elements),
             lab_controls(self.lab),
         ]
-        self.lab_label = controls[3].label_edit  # type: ignore[attr-defined]
+        self.lab_label = controls[4].label_edit  # type: ignore[attr-defined]
 
         title = QLabel("Studio")
         title.setStyleSheet("font-size: 17px; font-weight: 600;")
@@ -123,6 +132,7 @@ class StudioWindow(QWidget):
                 "2": lambda: self.tabs.setCurrentIndex(1),
                 "3": lambda: self.tabs.setCurrentIndex(2),
                 "4": lambda: self.tabs.setCurrentIndex(3),
+                "5": lambda: self.tabs.setCurrentIndex(4),
                 "Ctrl+Z": self.draw.undo,
                 "Ctrl+S": lambda: self.draw.save_png(),
                 "Escape": self.close,
