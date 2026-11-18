@@ -481,6 +481,7 @@ class AetherApp(QObject):
             system,
             content,
             on_text=hud.answer_append if hud is not None else None,
+            on_thinking=hud.answer_thinking if hud is not None else None,
             on_result=done,
             on_error=failed,
         )

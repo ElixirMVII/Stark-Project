@@ -120,3 +120,4 @@ enabled = false
 model = "claude-opus-5-5"
 effort = "low"             # low (เร็ว ประหยัด) | medium | high | xhigh | max (คิดลึก ช้า แพงขึ้น)
 max_tokens = 4096
+show_thinking = true       # วาด "โครงข่ายความคิด" จากสรุปความคิดของ Claude (ไม่มีค่าใช้จ่ายเพิ่ม)

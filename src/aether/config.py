@@ -146,6 +146,8 @@ class ClaudeConfig:
     model: str = "claude-opus-5-5"
     effort: str = "low"  # ความลึกของการคิด: low (เร็ว ประหยัด) … max
     max_tokens: int = 4096  # ความยาวคำตอบสูงสุด
+    # แสดงโครงข่ายความคิด: ขอ "สรุปความคิด" จาก API มาวาด (ค่าใช้จ่ายเท่าเดิม — โมเดลคิดอยู่แล้ว แค่ไม่ได้ส่งมาให้ดู)
+    show_thinking: bool = True
 
     def __post_init__(self) -> None:
         _require(bool(self.model.strip()), "claude.model ต้องไม่ว่าง")

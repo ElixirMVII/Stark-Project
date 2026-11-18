@@ -45,8 +45,10 @@ ON = ClaudeConfig(enabled=True)
 
 
 class FakeStream:
-    def __init__(self, pieces, message):
-        self._pieces, self._message = pieces, message
+    """แทน MessageStream ของ SDK: iterate แล้วได้ event ``thinking`` ก่อน แล้วจึง ``text``"""
+
+    def __init__(self, pieces, message, thinking=()):
+        self._pieces, self._message, self._thinking = pieces, message, thinking
 
     def __enter__(self):
         return self
@@ -54,9 +56,12 @@ class FakeStream:
     def __exit__(self, *exc):
         return False
 
-    @property
-    def text_stream(self):
-        return iter(self._pieces)
+    def __iter__(self):
+        for piece in self._thinking:
+            yield SimpleNamespace(type="thinking", thinking=piece, snapshot="")
+        yield SimpleNamespace(type="signature", signature="sig")
+        for piece in self._pieces:
+            yield SimpleNamespace(type="text", text=piece, snapshot="")
 
     def get_final_message(self):
         return self._message
@@ -65,9 +70,12 @@ class FakeStream:
 class FakeClient:
     """แทน ``anthropic.Anthropic`` — จดทุกคำขอ"""
 
-    def __init__(self, *, pieces=("สวัส", "ดี"), stop="end_turn", parsed=None, error=None):
+    def __init__(
+        self, *, pieces=("สวัส", "ดี"), stop="end_turn", parsed=None, error=None, thinking=()
+    ):
         self.calls: list[tuple[str, dict]] = []
         self.pieces, self.stop, self.parsed, self.error = pieces, stop, parsed, error
+        self.thinking = thinking
         self.beta = SimpleNamespace(
             messages=SimpleNamespace(stream=self._stream, parse=self._parse)
         )
@@ -80,7 +88,7 @@ class FakeClient:
         message = SimpleNamespace(
             stop_reason=self.stop, content=[SimpleNamespace(type="text", text=text)]
         )
-        return FakeStream(self.pieces, message)
+        return FakeStream(self.pieces, message, self.thinking)
 
     def _parse(self, **kwargs):
         self.calls.append(("parse", kwargs))
@@ -104,9 +112,11 @@ def make_service(client: FakeClient | None = None, config: ClaudeConfig = ON, ke
 class FakeService:
     """แทน :class:`ClaudeService` ทั้งตัว (สำหรับเทส UI)"""
 
-    def __init__(self, *, reason=None, pieces=("คำ", "ตอบ"), parsed=None, error=None):
+    def __init__(self, *, reason=None, pieces=("คำ", "ตอบ"), parsed=None, error=None, thinking=()):
         self.config = ON
         self.reason, self.pieces, self.parsed, self.error = reason, pieces, parsed, error
+        self.thinking = thinking
+        self.efforts: list[str | None] = []
         self.calls: list[tuple] = []
         self.resets = 0
 
@@ -128,10 +138,16 @@ class FakeService:
     def reset_client(self):
         self.resets += 1
 
-    def stream_text(self, system, content, on_text=None, *, max_tokens=None):
+    def stream_text(
+        self, system, content, on_text=None, *, max_tokens=None, on_thinking=None, effort=None
+    ):
         self.calls.append(("stream", system, content))
+        self.efforts.append(effort)
         if self.error:
             raise ClaudeError(self.error)
+        for piece in self.thinking:
+            if on_thinking is not None:
+                on_thinking(piece)
         for piece in self.pieces:
             if on_text is not None:
                 on_text(piece)

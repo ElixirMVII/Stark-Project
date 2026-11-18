@@ -16,7 +16,7 @@ import os
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
-from ..config import ClaudeConfig
+from ..config import CLAUDE_EFFORTS, ClaudeConfig
 from .secret import load_api_key
 
 __all__ = [
@@ -119,13 +119,26 @@ class ClaudeService:
         on_text: Callable[[str], None] | None = None,
         *,
         max_tokens: int | None = None,
+        on_thinking: Callable[[str], None] | None = None,
+        effort: str | None = None,
     ) -> str:
-        """ส่งข้อความหนึ่งรอบ คืนข้อความคำตอบทั้งหมด (``on_text`` ได้ทีละชิ้นระหว่างทาง)"""
-        kwargs = self._request(system, content, max_tokens)
+        """ส่งข้อความหนึ่งรอบ คืนข้อความคำตอบทั้งหมด (``on_text`` ได้ทีละชิ้นระหว่างทาง)
+
+        ``on_thinking`` = อยากได้สรุปความคิด (``thinking.display = "summarized"``) ทีละชิ้น — ใช้วาดโครงข่ายความคิด
+        ``effort`` = ความลึกเฉพาะคำขอนี้ (แทนค่าใน config)
+        """
+        kwargs = self._request(system, content, max_tokens, effort)
+        if on_thinking is not None and self._config.show_thinking:
+            kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
+        else:
+            on_thinking = None  # ไม่ได้ขอ = ไม่ส่งต่อ (ปิด show_thinking ไว้)
         with self._guard(), self._get_client().beta.messages.stream(**kwargs) as stream:
-            for piece in stream.text_stream:
-                if on_text is not None and piece:
-                    on_text(piece)
+            for event in stream:
+                kind = getattr(event, "type", "")
+                if kind == "text" and on_text is not None and event.text:
+                    on_text(event.text)
+                elif kind == "thinking" and on_thinking is not None and event.thinking:
+                    on_thinking(event.thinking)
             message = stream.get_final_message()
         self._check(message)
         return "".join(
@@ -141,7 +154,7 @@ class ClaudeService:
         max_tokens: int | None = None,
     ) -> T:
         """คำตอบแบบโครงสร้าง (pydantic model) — ใช้กับสูตรผสมใหม่/ควิซ/ข้อเสนอแก้ config"""
-        kwargs = self._request(system, content, max_tokens)
+        kwargs = self._request(system, content, max_tokens, None)
         with self._guard():
             message = self._get_client().beta.messages.parse(output_format=model_cls, **kwargs)
         self._check(message)
@@ -152,17 +165,21 @@ class ClaudeService:
 
     # ---- internal --------------------------------------------------------- #
 
-    def _request(self, system: str, content: Content, max_tokens: int | None) -> dict[str, Any]:
+    def _request(
+        self, system: str, content: Content, max_tokens: int | None, effort: str | None
+    ) -> dict[str, Any]:
         reason = self.ready_reason()
         if reason is not None:
             raise ClaudeError(reason)
         cfg = self._config
+        if effort is not None and effort not in CLAUDE_EFFORTS:
+            raise ClaudeError(f"effort {effort!r} ใช้ไม่ได้")
         kwargs: dict[str, Any] = {
             "model": cfg.model,
             "max_tokens": max_tokens or cfg.max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": content}],
-            "output_config": {"effort": cfg.effort},
+            "output_config": {"effort": effort or cfg.effort},
         }
         if supports_fallback(cfg.model):
             kwargs["betas"] = [FALLBACK_BETA]

@@ -388,6 +388,10 @@ class HudOverlay(QWidget):
         self._answer.append(piece, self._clock())
         self._refresh("answer")
 
+    def answer_thinking(self, piece: str) -> None:
+        self._answer.add_thinking(piece, self._clock())
+        self._refresh("answer")
+
     def answer_finish(self, text: str | None = None) -> None:
         self._answer.finish(text, self._clock())
         self._refresh("answer")
@@ -554,6 +558,9 @@ class HudGroup:
 
     def answer_append(self, piece: str) -> None:
         self.primary.answer_append(piece)
+
+    def answer_thinking(self, piece: str) -> None:
+        self.primary.answer_thinking(piece)
 
     def answer_finish(self, text: str | None = None) -> None:
         self.primary.answer_finish(text)

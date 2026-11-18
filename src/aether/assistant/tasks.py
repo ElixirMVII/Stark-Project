@@ -21,11 +21,12 @@ _RUNNING: set[ClaudeTask] = set()
 
 class ClaudeTask(QObject):
     text = Signal(str)  # ชิ้นข้อความระหว่าง stream
+    thinking = Signal(str)  # ชิ้นสรุปความคิด (วาดโครงข่ายความคิด)
     result = Signal(object)  # ผลสุดท้าย (str หรือ pydantic model)
     failed = Signal(str)  # ข้อความไทยพร้อมแสดง
     finished = Signal()
 
-    def __init__(self, job: Callable[[Callable[[str], None]], Any]) -> None:
+    def __init__(self, job: Callable[[Callable[[str], None], Callable[[str], None]], Any]) -> None:
         super().__init__()
         self._job = job
         self.cancelled = False
@@ -50,9 +51,13 @@ class ClaudeTask(QObject):
         if not self.cancelled:
             self.text.emit(piece)
 
+    def _emit_thinking(self, piece: str) -> None:
+        if not self.cancelled:
+            self.thinking.emit(piece)
+
     def _run(self) -> None:
         try:
-            value = self._job(self._emit_text)
+            value = self._job(self._emit_text, self._emit_thinking)
         except ClaudeError as exc:
             if not self.cancelled:
                 self.failed.emit(str(exc))
@@ -71,9 +76,10 @@ class ClaudeTask(QObject):
 
 
 def run_task(
-    job: Callable[[Callable[[str], None]], Any],
+    job: Callable[[Callable[[str], None], Callable[[str], None]], Any],
     *,
     on_text: Callable[[str], None] | None = None,
+    on_thinking: Callable[[str], None] | None = None,
     on_result: Callable[[Any], None] | None = None,
     on_error: Callable[[str], None] | None = None,
     on_finished: Callable[[], None] | None = None,
@@ -82,6 +88,8 @@ def run_task(
     task = ClaudeTask(job)
     if on_text is not None:
         task.text.connect(on_text)
+    if on_thinking is not None:
+        task.thinking.connect(on_thinking)
     if on_result is not None:
         task.result.connect(on_result)
     if on_error is not None:
@@ -115,11 +123,20 @@ class ClaudeBridge:
         on_result: Callable[[Any], None] | None = None,
         on_error: Callable[[str], None] | None = None,
         max_tokens: int | None = None,
+        on_thinking: Callable[[str], None] | None = None,
+        effort: str | None = None,
     ) -> ClaudeTask | None:
-        def job(emit: Callable[[str], None]) -> str:
-            return self.service.stream_text(system, content, emit, max_tokens=max_tokens)
+        """``on_thinking`` = ขอสรุปความคิดมาด้วย (โครงข่ายความคิด) · ``effort`` = ความลึกเฉพาะครั้งนี้"""
 
-        return self._start(job, on_text, on_result, on_error)
+        def job(emit: Callable[[str], None], emit_thinking: Callable[[str], None]) -> str:
+            extra: dict[str, Any] = {}
+            if on_thinking is not None:
+                extra["on_thinking"] = emit_thinking
+            if effort is not None:
+                extra["effort"] = effort
+            return self.service.stream_text(system, content, emit, max_tokens=max_tokens, **extra)
+
+        return self._start(job, on_text, on_result, on_error, on_thinking)
 
     def parse(
         self,
@@ -131,12 +148,12 @@ class ClaudeBridge:
         on_error: Callable[[str], None] | None = None,
         max_tokens: int | None = None,
     ) -> ClaudeTask | None:
-        def job(_emit: Callable[[str], None]) -> Any:
+        def job(_emit: Callable[[str], None], _thinking: Callable[[str], None]) -> Any:
             return self.service.parse(system, content, model_cls, max_tokens=max_tokens)
 
         return self._start(job, None, on_result, on_error)
 
-    def _start(self, job, on_text, on_result, on_error) -> ClaudeTask | None:
+    def _start(self, job, on_text, on_result, on_error, on_thinking=None) -> ClaudeTask | None:
         reason = self.ready_reason()
         if reason is not None:
             if on_error is not None:
@@ -154,6 +171,7 @@ class ClaudeBridge:
         return run_task(
             job,
             on_text=on_text,
+            on_thinking=on_thinking,
             on_result=on_result,
             on_error=on_error,
             on_finished=done,

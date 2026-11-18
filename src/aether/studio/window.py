@@ -25,6 +25,7 @@ from ..config import Config
 from ..tracker import HandFrame
 from .chem_page import ChemistryPage, chemistry_controls
 from .input import StudioInput
+from .mind_page import MindPage, mind_controls
 from .pages import (
     DrawPage,
     LabPage,
@@ -78,7 +79,8 @@ class StudioWindow(QWidget):
         self.theremin = ThereminPage(clock=clock, audio=audio)
         self.lab = LabPage(clock=clock, samples_path=samples_path)
         self.elements = ChemistryPage(clock=clock)
-        for page in (self.draw, self.elements):
+        self.mind = MindPage(clock=clock)
+        for page in (self.draw, self.elements, self.mind):
             page.claude = claude
             page.on_answer = on_answer
         self.pages: list[StudioPage] = [
@@ -87,6 +89,7 @@ class StudioWindow(QWidget):
             self.theremin,
             self.elements,
             self.lab,
+            self.mind,
         ]
         controls = [
             draw_controls(self.draw),
@@ -94,6 +97,7 @@ class StudioWindow(QWidget):
             theremin_controls(self.theremin),
             chemistry_controls(self.elements),
             lab_controls(self.lab),
+            mind_controls(self.mind),
         ]
         self.lab_label = controls[4].label_edit  # type: ignore[attr-defined]
 
@@ -139,6 +143,7 @@ class StudioWindow(QWidget):
                 "3": lambda: self.tabs.setCurrentIndex(2),
                 "4": lambda: self.tabs.setCurrentIndex(3),
                 "5": lambda: self.tabs.setCurrentIndex(4),
+                "6": lambda: self.tabs.setCurrentIndex(5),
                 "Ctrl+Z": self.draw.undo,
                 "Ctrl+S": lambda: self.draw.save_png(),
                 "Escape": self.close,

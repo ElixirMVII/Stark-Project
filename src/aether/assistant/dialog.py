@@ -35,6 +35,7 @@ from ..config import ConfigError
 from . import configedit, diagnostics, prompts, secret
 from .schemas import ConfigProposal
 from .tasks import ClaudeBridge
+from .thought_view import ThoughtView
 
 __all__ = ["AssistantWindow", "KeyStore"]
 
@@ -93,7 +94,7 @@ class AssistantWindow(QWidget):
         super().__init__(parent)
         self.setWindowTitle("AETHER — Claude")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.resize(760, 640)
+        self.resize(900, 720)
         self.bridge = bridge
         self._config_path = config_path
         self._template = template
@@ -166,13 +167,17 @@ class AssistantWindow(QWidget):
         self.ask_button.clicked.connect(self.ask)
         QShortcut(QKeySequence("Ctrl+Return"), self.ask_edit, activated=self.ask)
         self.ask_answer = _answer_box()
+        self.ask_thoughts = ThoughtView()  # โครงข่ายความคิดที่งอกระหว่าง Claude คิด
         layout = QVBoxLayout(page)
         layout.addWidget(self.ask_edit)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self.ask_button)
         layout.addLayout(row)
-        layout.addWidget(self.ask_answer, 1)
+        answers = QHBoxLayout()
+        answers.addWidget(self.ask_answer, 2)
+        answers.addWidget(self.ask_thoughts, 3)
+        layout.addLayout(answers, 1)
         return page
 
     def _build_logs(self) -> QWidget:
@@ -296,7 +301,7 @@ class AssistantWindow(QWidget):
         if not question:
             return
         system, content = prompts.free_question(question)
-        self._stream_into(self.ask_answer, system, content, question)
+        self._stream_into(self.ask_answer, system, content, question, thoughts=self.ask_thoughts)
 
     def collect_logs(self) -> None:
         tail, lines = diagnostics.collect(self._log_directory, self._incident_directory)
@@ -406,9 +411,19 @@ class AssistantWindow(QWidget):
         question, answer = item.data(Qt.ItemDataRole.UserRole)
         self.history_view.setPlainText(f"{question}\n\n— Claude —\n{answer}")
 
-    def _stream_into(self, box: QPlainTextEdit, system: str, content: Any, question: str) -> None:
+    def _stream_into(
+        self,
+        box: QPlainTextEdit,
+        system: str,
+        content: Any,
+        question: str,
+        *,
+        thoughts: ThoughtView | None = None,
+    ) -> None:
         box.clear()
         self._status("Claude กำลังตอบ…")
+        if thoughts is not None:
+            thoughts.begin(question)
 
         def piece(text: str) -> None:
             cursor = box.textCursor()
@@ -419,11 +434,14 @@ class AssistantWindow(QWidget):
             box.setPlainText(answer)
             self._status("")
             self.add_history(question, answer)
+            if thoughts is not None:
+                thoughts.finish(answer)
 
         self.bridge.stream(
             system,
             content,
             on_text=piece,
+            on_thinking=thoughts.add_thinking if thoughts is not None else None,
             on_result=done,
             on_error=lambda message: self._status(message, error=True),
         )
