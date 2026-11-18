@@ -35,6 +35,7 @@ from .chemistry import (
 from .claude_ui import StudioAnswer
 from .input import SwipeDetector
 from .pages import ACCENT, DIM, PRIMARY, StudioPage, _font
+from .science import Subject
 
 __all__ = ["GUIDE_FILTERS", "ChemistryPage", "browser_pages", "chemistry_controls", "guide_entries"]
 
@@ -135,6 +136,7 @@ class ChemistryPage(StudioPage):
         self.claude = None
         self.on_answer: Callable[[str, str], None] | None = None
         self.answer = StudioAnswer(clock)
+        self.on_experiment: Callable[[Subject], None] | None = None  # ส่งสารไปหน้า Experiments
         self.claude_view = "answer"  # "answer" | "ideas" | "quiz"
         self.ideas: list[Compound] = []
         self.quiz: Quiz | None = None
@@ -276,12 +278,40 @@ class ChemistryPage(StudioPage):
 
     def try_recipe(self, compound: Compound) -> None:
         """เทขวด แล้วเติมอะตอมตามสูตรทีละตัว (เห็นสารค่อยๆ ก่อตัว)"""
+        self.fill(compound.counts, f"Mixing {compound.name}")
+
+    def fill(self, counts, message: str = "Filling the flask") -> None:
         self.lab.flask.clear()
         self.lab.check()
-        self._fill_queue = [s for s, n in compound.counts.items() for _ in range(n)]
+        self._fill_queue = [s for s, n in counts.items() for _ in range(n)][
+            : self.lab.flask.capacity
+        ]
         self._fill_next = self._clock()
-        self.toast(f"Mixing {compound.name}")
+        self.toast(message)
         self.update()
+
+    # ---- เครื่องมือทดลอง ---------------------------------------------------- #
+
+    @property
+    def last_compound(self) -> Compound | None:
+        match = self.lab.last_match
+        return match[0] if match is not None else None
+
+    def experiment_subject(self) -> Subject:
+        """สารที่จะส่งไปทดลอง: สารที่เพิ่งผสมได้ > ของในขวด > ธาตุที่เลือกอยู่"""
+        if self.last_compound is not None:
+            return Subject.from_compound(self.last_compound)
+        if self.lab.flask.atoms:
+            return Subject.from_counts(self.lab.flask.counts)
+        return Subject.from_element(self.focus)
+
+    def open_experiment(self) -> None:
+        if self.on_experiment is not None:
+            self.on_experiment(self.experiment_subject())
+
+    def experiment_rect(self) -> QRectF:
+        area = self.result_rect()
+        return QRectF(area.left(), area.bottom() - 26, min(area.width(), 230.0), 24)
 
     def undo(self) -> None:
         if self.lab.flask.undo():
@@ -650,6 +680,8 @@ class ChemistryPage(StudioPage):
         else:
             for rect, compound in self._makes_rects(panel):
                 zones.append((rect, lambda c=compound: self.try_recipe(c)))
+        if self.on_experiment is not None and self.result_rect().width() >= 120:
+            zones.append((self.experiment_rect(), self.open_experiment))
         self._zones = zones
         return zones
 
@@ -698,6 +730,7 @@ class ChemistryPage(StudioPage):
             self._paint_element(painter, now)
         self._paint_flask(painter, now)
         self._paint_result(painter)
+        self._paint_experiment_chip(painter)
         self._paint_held(painter)
         self.paint_cursors(painter, self.lab.hold_progress)
         self.paint_toast(painter)
@@ -1235,6 +1268,18 @@ class ChemistryPage(StudioPage):
             name = f"{hint.compound.name} · {hint.compound.thai}"
             painter.drawText(QRectF(area.left(), y + 18, area.width(), 18), top_left, name)
 
+    def _paint_experiment_chip(self, painter: QPainter) -> None:
+        if self.on_experiment is None or self.result_rect().width() < 120:
+            return
+        rect = self.experiment_rect()
+        painter.setPen(QPen(ACCENT, 1.0))
+        painter.setBrush(with_alpha(ACCENT, 0.14))
+        painter.drawRoundedRect(rect, 12, 12)
+        painter.setFont(_font(11, 600))
+        painter.setPen(ACCENT)
+        label = f"Experiment with {self.experiment_subject().display} ›"
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
+
     def _paint_held(self, painter: QPainter) -> None:
         for hand in self.hands:
             symbol = self.lab.held.get(hand.handedness)
@@ -1336,6 +1381,7 @@ def chemistry_controls(page: ChemistryPage) -> QWidget:
         ("Guide", lambda: page.set_panel("guide" if page.panel != "guide" else "element")),
         ("Remove last atom", page.undo),
         ("Empty flask", page.empty),
+        ("Experiments ›", page.open_experiment),
     )
     for text, slot in buttons:
         button = QPushButton(text)

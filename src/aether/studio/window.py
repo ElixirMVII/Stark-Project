@@ -24,6 +24,7 @@ from .. import ui_style
 from ..config import Config
 from ..tracker import HandFrame
 from .chem_page import ChemistryPage, chemistry_controls
+from .experiments_page import ExperimentsPage, experiments_controls
 from .input import StudioInput
 from .mind_page import MindPage, mind_controls
 from .pages import (
@@ -38,6 +39,7 @@ from .pages import (
     sandbox_controls,
     theremin_controls,
 )
+from .science import Subject
 
 __all__ = ["StudioWindow"]
 
@@ -80,6 +82,9 @@ class StudioWindow(QWidget):
         self.lab = LabPage(clock=clock, samples_path=samples_path)
         self.elements = ChemistryPage(clock=clock)
         self.mind = MindPage(clock=clock)
+        self.experiments = ExperimentsPage(clock=clock, sources=self._experiment_sources)
+        self.elements.on_experiment = self.open_experiment
+        self.experiments.on_mix = self.mix_in_flask
         for page in (self.draw, self.elements, self.mind):
             page.claude = claude
             page.on_answer = on_answer
@@ -88,6 +93,7 @@ class StudioWindow(QWidget):
             self.sandbox,
             self.theremin,
             self.elements,
+            self.experiments,
             self.lab,
             self.mind,
         ]
@@ -96,10 +102,11 @@ class StudioWindow(QWidget):
             sandbox_controls(self.sandbox),
             theremin_controls(self.theremin),
             chemistry_controls(self.elements),
+            experiments_controls(self.experiments),
             lab_controls(self.lab),
             mind_controls(self.mind),
         ]
-        self.lab_label = controls[4].label_edit  # type: ignore[attr-defined]
+        self.lab_label = controls[self.pages.index(self.lab)].label_edit  # type: ignore[attr-defined]
 
         title = QLabel("Studio")
         title.setStyleSheet("font-size: 17px; font-weight: 600;")
@@ -144,6 +151,7 @@ class StudioWindow(QWidget):
                 "4": lambda: self.tabs.setCurrentIndex(3),
                 "5": lambda: self.tabs.setCurrentIndex(4),
                 "6": lambda: self.tabs.setCurrentIndex(5),
+                "7": lambda: self.tabs.setCurrentIndex(6),
                 "Ctrl+Z": self.draw.undo,
                 "Ctrl+S": lambda: self.draw.save_png(),
                 "Escape": self.close,
@@ -166,6 +174,30 @@ class StudioWindow(QWidget):
 
     def set_page(self, index: int) -> None:
         self.tabs.setCurrentIndex(index)
+
+    # ---- Elements ↔ Experiments ------------------------------------------- #
+
+    def _experiment_sources(self) -> list[Subject]:
+        """ชิปสารในหน้า Experiments ที่มาจากหน้า Elements"""
+        out = [Subject.from_element(self.elements.focus)]
+        if self.elements.last_compound is not None:
+            out.insert(0, Subject.from_compound(self.elements.last_compound))
+        elif self.elements.lab.flask.atoms:
+            out.insert(0, Subject.from_counts(self.elements.lab.flask.counts))
+        return out
+
+    def open_experiment(self, subject: Subject) -> None:
+        self.experiments.set_subject(subject)
+        self.set_page(self.pages.index(self.experiments))
+
+    def mix_in_flask(self, subject: Subject) -> None:
+        """จากหน้า Experiments: กลับไปผสมสารนี้ในขวดของหน้า Elements"""
+        self.set_page(self.pages.index(self.elements))
+        if subject.element is not None:
+            self.elements.focus = subject.element
+            self.elements.set_panel("element")
+        name = subject.name if subject.kind != "mix" else subject.display
+        self.elements.fill(subject.counts, f"Mixing {name}")
 
     def show_frame(self, frame: HandFrame) -> None:
         hands = self.input.update(frame)
