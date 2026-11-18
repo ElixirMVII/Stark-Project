@@ -52,11 +52,13 @@ __all__ = [
     "parse_config",
     "poses_path",
     "read_calibration",
+    "samples_path",
 ]
 
 GESTURE_MODEL_FILENAME = "gesture_recognizer.task"
 CALIBRATION_FILENAME = "calibration.json"
 CALIBRATION_VERSION = 1
+SAMPLES_FILENAME = "hand_samples.jsonl"
 POSES_FILENAME = "poses.json"
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
@@ -540,6 +542,11 @@ def calibration_path() -> Path:
 
 def poses_path() -> Path:
     return app_root() / POSES_FILENAME
+
+
+def samples_path() -> Path:
+    """ตัวอย่างท่ามือที่เก็บจากห้องทดลองมือของ Studio (ตัวเลข landmark เท่านั้น ไม่มีภาพ)"""
+    return app_root() / SAMPLES_FILENAME
 
 
 def log_dir() -> Path:

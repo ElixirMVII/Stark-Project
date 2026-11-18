@@ -545,3 +545,20 @@ spec ระบุ "เทรนท่าเองด้วย MediaPipe Model Ma
 - หน้าต่างของแอป (debug, wizard, Studio) ใช้ `ui_style.apply_app_style`: Fusion + palette เข้ม + stylesheet มุมมน
   ทุกสไตล์ HUD (หน้าต่างไม่ใช่ sci-fi อยู่แล้ว ไม่ต้องมีสองแบบ)
 
+### D50 · AETHER Studio — ใช้มือสร้าง/ทดลอง (วาดรูป, ฟิสิกส์, theremin, ห้องทดลองมือ)
+- ผู้ใช้ขอ "ฟีเจอร์ที่ใช้ร่วมกับ AETHER ได้มากกว่าคุมคอม เช่นสร้าง/ทดลองอะไรต่างๆ" → หน้าต่างแยก `StudioWindow`
+  สี่หน้า เปิดแบบเดียวกับ wizard (tray / `--studio`, pipeline ถูก DISARM ระหว่างเปิด, รับ `HandFrame` ผ่าน
+  `show_frame`) จึงไม่ต้องแตะ gesture engine และไม่มีโอกาสคลิกพลาดระหว่างเล่น
+- `StudioInput` แปลงมือเป็น `StudioHand` (0–1 ของผืนผ้าใบจาก `pointer.active_region`, One Euro, จีบมี hysteresis
+  ตาม `pinch.on/off`, ความเร็ว) ทุกโหมดเป็น pure logic + test (ไม่มี Qt): `Drawing`/`DrawController`,
+  `World` (ฟิสิกส์ timestep คงที่ 1/120 s, ชนผนัง/ชนกันแบบ impulse ตามมวล=พื้นที่, ลูกที่ถือ = มวลอนันต์),
+  `Voice` (numpy, ต่อเฟสข้ามบล็อก, glide/fade แบบ exponential), `hand_metrics` / `SampleRecorder`
+- ท่าคำสั่งใน Studio เป็น "ค้างท่า" (`HoldDetector`) ไม่ใช่ท่าทันที เพื่อกันการล้างภาพ/รีเซ็ตโดยบังเอิญ
+  — ล้างภาพ/รีเซ็ตใช้ 👎 1.2 วินาที (นานกว่าคำสั่งอื่น)
+- เมาส์จริงบนผืนผ้าใบ = มือจำลอง (กดซ้าย = จีบ) เมื่อไม่เห็นมือจากกล้อง → ลองทุกหน้าได้ทันทีแม้ยังไม่มีกล้อง
+- เสียง theremin: `QAudioSink` push mode (QtMultimedia มีอยู่แล้วสำหรับ `QSoundEffect` — ไม่เพิ่ม dependency)
+  Float32 48 kHz ถ้าอุปกรณ์ไม่รับ ใช้ Int16 ที่ sample rate ของอุปกรณ์ · ไม่มีอุปกรณ์ = เงียบ ไม่ error
+- Hand lab เก็บ `hand_samples.jsonl` (ตัวเลข landmark + world landmark เท่านั้น, ไม่มีภาพ — ตามข้อห้ามของ spec)
+  เป็นข้อมูลสำหรับสอน/วัดตัวจำแนกท่ามือ (D52)
+- ยังไม่ได้ลองกับกล้องจริง: ช่วง `active_region` อาจต้องจูนสำหรับการวาด (วาดต้องการพื้นที่เอื้อมถึงทั่วผืนผ้าใบ)
+

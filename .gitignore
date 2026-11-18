@@ -21,4 +21,5 @@ calibration.json
 logs/
 *.log
 poses.json
+hand_samples.jsonl
 incidents/

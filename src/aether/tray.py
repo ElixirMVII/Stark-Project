@@ -1,4 +1,4 @@
-"""System tray: Arm/Disarm, หน้าต่าง Debug, Calibrate, สอนท่ามือ, โหลด config ใหม่, ออก
+"""System tray: Arm/Disarm, หน้าต่าง Debug, Calibrate, สอนท่ามือ, Studio, โหลด config ใหม่, ออก
 
 ไอคอนวาดด้วย QPainter (ไม่มีไฟล์รูป): วงแหวนสีหลักเมื่อ ARMED สีเทาเมื่อ DISARMED
 """
@@ -55,6 +55,7 @@ class Tray(QObject):
     pause_requested = Signal(bool)  # True = พักกล้อง
     autostart_requested = Signal(bool)  # True = เปิดพร้อม Windows
     poses_requested = Signal()
+    studio_requested = Signal()
     reload_requested = Signal()
     quit_requested = Signal()
 
@@ -76,6 +77,8 @@ class Tray(QObject):
         self._calibrate_action.triggered.connect(self.calibrate_requested)
         self._poses_action = QAction("สอนท่ามือ…", self._menu)
         self._poses_action.triggered.connect(self.poses_requested)
+        self._studio_action = QAction("Studio — วาดรูป ฟิสิกส์ ดนตรี…", self._menu)
+        self._studio_action.triggered.connect(self.studio_requested)
         self._autostart_action = QAction("เปิดพร้อม Windows", self._menu)
         self._autostart_action.setCheckable(True)
         self._autostart_action.setVisible(False)  # แสดงเมื่อ set_autostart(available=True)
@@ -91,6 +94,7 @@ class Tray(QObject):
         self._menu.addAction(self._debug_action)
         self._menu.addAction(self._calibrate_action)
         self._menu.addAction(self._poses_action)
+        self._menu.addAction(self._studio_action)
         self._menu.addAction(self._autostart_action)
         self._menu.addAction(self._reload_action)
         self._menu.addSeparator()
@@ -119,6 +123,7 @@ class Tray(QObject):
             "debug": self._debug_action,
             "calibrate": self._calibrate_action,
             "poses": self._poses_action,
+            "studio": self._studio_action,
             "autostart": self._autostart_action,
             "reload": self._reload_action,
             "quit": self._quit_action,

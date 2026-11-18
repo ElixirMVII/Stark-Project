@@ -44,6 +44,7 @@ from .config import (
     log_dir,
     model_path,
     poses_path,
+    samples_path,
 )
 from .debug_view import DebugView
 from .gestures import EventKind, GestureEngine, GestureEvent
@@ -65,6 +66,7 @@ from .pose_wizard import PoseWizard
 from .poses import PoseClassifier, PoseFileError, PoseLibrary, load_poses
 from .sound import SOUND_NAMES, SoundPlayer
 from .sources import CAMERA_SOURCE, NullTracker, SourceSpec, create_source
+from .studio.window import StudioWindow
 from .targeting import TargetFinder
 from .tracker import HandTracker
 from .tray import Tray
@@ -94,6 +96,7 @@ class Options:
     calibrate: bool = False
     no_calibration: bool = False  # ไม่ใช้ค่าใน calibration.json
     teach: bool = False  # เปิดหน้าต่างสอนท่ามือตอนเริ่ม
+    studio: bool = False  # เปิด AETHER Studio ตอนเริ่ม
     source: SourceSpec = CAMERA_SOURCE  # แหล่งเฟรม: camera | mouse | replay:PATH
 
 
@@ -673,7 +676,7 @@ class AetherApp(QObject):
 
 
 AppFactory = Callable[[Config, Options, bool, PoseLibrary], AetherApp]
-Wizard = CalibrationWizard | PoseWizard
+Wizard = CalibrationWizard | PoseWizard | StudioWindow
 
 
 def _default_app_factory(
@@ -714,6 +717,7 @@ class AppController(QObject):
         config_loader: Callable[[], Config] | None = None,
         calibration_file: Path | None = None,
         poses_file: Path | None = None,
+        samples_file: Path | None = None,
         use_tray: bool | None = None,
         autostart: AutoStart | None = None,
         parent: QObject | None = None,
@@ -726,6 +730,7 @@ class AppController(QObject):
         )
         self._calibration_file = calibration_file or calibration_path()
         self._poses_file = poses_file or poses_path()
+        self._samples_file = samples_file or samples_path()
         self._app: AetherApp | None = None
         self._wizard: Wizard | None = None
         self._autostart = autostart or AutoStart()
@@ -741,6 +746,7 @@ class AppController(QObject):
             self._tray.debug_requested.connect(self._set_debug)
             self._tray.calibrate_requested.connect(self.open_calibration)
             self._tray.poses_requested.connect(self.open_poses)
+            self._tray.studio_requested.connect(self.open_studio)
             self._tray.reload_requested.connect(self.reload)
             self._tray.quit_requested.connect(QApplication.quit)
 
@@ -769,6 +775,8 @@ class AppController(QObject):
             self.open_calibration()
         elif self._options.teach:
             self.open_poses()
+        elif self._options.studio:
+            self.open_studio()
 
     def shutdown(self) -> None:
         if self._wizard is not None:
@@ -814,6 +822,18 @@ class AppController(QObject):
             app = self._app
             self._open_wizard(PoseWizard(app.config, app.poses, self._poses_file))
             log.info("เปิดหน้าต่างสอนท่ามือ")
+
+    def open_studio(self) -> None:
+        """เปิด AETHER Studio — วาดรูป ฟิสิกส์ ดนตรี ห้องทดลองมือ (มือหยุดคุมเมาส์ระหว่างนั้น)"""
+        if self._app is not None and not self._raise_wizard():
+            self._open_wizard(
+                StudioWindow(
+                    self._app.config,
+                    samples_path=self._samples_file,
+                    audio=self._app.config.hud.sounds,
+                )
+            )
+            log.info("เปิด AETHER Studio")
 
     def load_poses(self, config: Config) -> PoseLibrary:
         """ท่าที่สอนไว้ใน ``poses.json`` — ไฟล์เสียจะแจ้งเตือนแล้วใช้งานต่อแบบไม่มีท่าที่สอนเอง"""
@@ -901,7 +921,7 @@ class AppController(QObject):
 
     def _on_armed_changed(self, armed: bool) -> None:
         if armed and self._wizard is not None and self._app is not None:
-            log.info("หน้าต่าง calibrate/สอนท่ายังเปิดอยู่ — ยังไม่เปิดการคุมเมาส์ด้วยมือ")
+            log.info("หน้าต่าง calibrate/สอนท่า/Studio ยังเปิดอยู่ — ยังไม่เปิดการคุมเมาส์ด้วยมือ")
             self._app.pipeline.set_armed(False)
             return
         if self._tray is not None:

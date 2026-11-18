@@ -1,5 +1,5 @@
 """CLI: ``python -m aether [--source camera|mouse|replay:PATH] [--debug] [--dry-run] [--no-hud]
-[--config PATH] [--calibrate] [--teach] [--check]``"""
+[--config PATH] [--calibrate] [--teach] [--studio] [--check]``"""
 
 from __future__ import annotations
 
@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="เปิดหน้าต่างสอนท่ามือตอนเริ่ม (สอนท่าใหม่ ผูกปุ่มลัด แล้วบันทึก poses.json)",
     )
     parser.add_argument(
+        "--studio",
+        action="store_true",
+        help="เปิด AETHER Studio ตอนเริ่ม (วาดรูปในอากาศ, กระบะทรายฟิสิกส์, เครื่องดนตรีอากาศ, ห้องทดลองมือ)",
+    )
+    parser.add_argument(
         "--no-calibration",
         action="store_true",
         help="ไม่ใช้ค่าที่ calibrate ไว้ (ใช้ค่าใน config.toml อย่างเดียว)",
@@ -87,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         calibrate=args.calibrate,
         no_calibration=args.no_calibration,
         teach=args.teach,
+        studio=args.studio,
         source=args.source,
     )
     return run_check(options) if args.check else run(options)
